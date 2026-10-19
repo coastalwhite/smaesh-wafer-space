@@ -1,0 +1,3 @@
+[submodule "ip/SMAesH"]
+	path = ip/SMAesH
+	url = https://github.com/simple-crypto/SMAesH
