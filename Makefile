@@ -133,3 +133,15 @@ sim-gl: clone-pdk defines ## Run gate-level simulation with cocotb (after copy-f
 sim-view: ## View simulation waveforms in GTKWave
 	gtkwave cocotb/sim_build/chip_top.fst
 .PHONY: sim-view
+
+smaesh-hdl: ## Generate the SMAesH HDL tree (COMPRESS S-box) into ./result
+	nix build .#smaesh-hdl --out-link result
+.PHONY: smaesh-hdl
+
+sim-smaesh: smaesh-hdl ## Run the SMAesH driver testbench with cocotb
+	cd cocotb; SIM=verilator python3 smaesh_driver_tb.py
+.PHONY: sim-smaesh
+
+sim-smaesh-view: ## View SMAesH driver waveforms in GTKWave (needs WAVES=1 run)
+	gtkwave cocotb/sim_build/dump.vcd
+.PHONY: sim-smaesh-view

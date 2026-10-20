@@ -92,6 +92,12 @@
               iverilog
               verilator
 
+              # Verilator compiles the simulation to C++, so cocotb's
+              # verilator runner needs a host compiler on PATH. Icarus is
+              # not an alternative here: it cannot elaborate SMAesH, and
+              # upstream only supports verilator.
+              gcc
+
               # Waveform viewing
               gtkwave
               surfer

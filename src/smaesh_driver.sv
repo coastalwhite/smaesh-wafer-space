@@ -1,11 +1,15 @@
 `default_nettype none
 
+// A very simple driver for the SMAesH HPC core.
+//
+// A state machine receives input data, executes and transmits output data.
 module smaesh_driver(
     input wire clk,
     input wire rst_n,
 
     input wire Rx,
-    output wire Tx
+    output wire Tx,
+	output wire Trigger
 );
     // Data-in.
     reg [255:0] Din;
@@ -82,6 +86,24 @@ module smaesh_driver(
     wire [8:0] NextStateCtr = StateCtr + 1;
     localparam [7:0] LutModeSelectToCfg = 8'b10_01_00_00;
 
+    // Per-state counter limits.
+    wire [8:0] DinStateCtrMax =
+        (ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (2*128 - 1);
+    wire [8:0] KeyStateCtrMax =
+        (ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (
+        (ModeSelect == MODE_SELECT_AES128) ? (2*128 - 1) : (
+        (ModeSelect == MODE_SELECT_AES192) ? (2*192 - 1) : (
+                                             (2*256 - 1)
+        )));
+    wire [8:0] ExecKeyStateCtrMax =
+        (
+             ModeSelect == MODE_SELECT_SBOX
+          || ModeSelect == MODE_SELECT_AES128
+        ) ? (((2 * 128) / 32) - 1) : (
+        (ModeSelect == MODE_SELECT_AES192) ? (((2 * 192) / 32) - 1) : (
+                                             (((2 * 256) / 32) - 1)
+        ));
+
     assign SmaeshSeed_I = (State == STATE_EXEC_RESEED) ? Seed : 80'b0;
     assign SmaeshSeedValid_I = State == STATE_EXEC_RESEED;
 
@@ -92,9 +114,10 @@ module smaesh_driver(
 
     assign SmaeshSharesData_I = (State == STATE_EXEC_INIT) ? Din : 256'b0;
     assign SmaeshDataValid_I = State == STATE_EXEC_INIT;
-    assign SmaeshDataReady_O = State == STATE_EXEC_FINISH;
+    assign SmaeshReady_O = State == STATE_EXEC_FINISH;
 
     assign Tx = (State == STATE_TX_SEND) ? Dout[StateCtr[7:0]] : (State == STATE_TX_START);
+	assign Trigger = State == STATE_EXEC_INIT;
 
     always @(posedge clk) begin
         if (~rst_n) begin
@@ -138,10 +161,7 @@ module smaesh_driver(
             end
 
             // Receive main data chunks.
-            STATE_RX_DATA_IN: begin : DATA_IN_RCV
-                reg [8:0] DinStateCtrMax =
-                    (ModeSelect == MODE_SELECT_SBOX) ? 15 : 255;
-
+            STATE_RX_DATA_IN: begin
                 Din[StateCtr] <= Rx;
 
                 if (StateCtr == DinStateCtrMax) begin
@@ -150,14 +170,7 @@ module smaesh_driver(
                 end
                 else StateCtr <= NextStateCtr;
             end
-            STATE_RX_KEY_IN: begin : KEY_IN_RCV
-                reg [8:0] KeyStateCtrMax =
-                    (ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (
-                    (ModeSelect == MODE_SELECT_AES128) ? (2*128 - 1) : (
-                    (ModeSelect == MODE_SELECT_AES192) ? (2*192 - 1) : (
-                                                         (2*256 - 1)
-                    )));
-
+            STATE_RX_KEY_IN: begin
                 Key[StateCtr] <= Rx;
 
                 if (StateCtr == KeyStateCtrMax) begin
@@ -167,7 +180,7 @@ module smaesh_driver(
                 else StateCtr <= NextStateCtr;
             end
             STATE_RX_SEED: begin : SEED_RCV
-                localparam [8:0] SeedStateCtrMax = 79;
+                localparam [8:0] SeedStateCtrMax = 80 - 1;
 
                 Seed[StateCtr] <= Rx;
 
@@ -182,16 +195,7 @@ module smaesh_driver(
             STATE_EXEC_RESEED: begin
                 if (SmaeshSeedReady_I) State <= STATE_EXEC_KEY_SET;
             end
-            STATE_EXEC_KEY_SET: begin : EXEC_KEY_SET
-                reg [8:0] ExecKeyStateCtrMax =
-                    (
-                         ModeSelect == MODE_SELECT_SBOX
-                      || ModeSelect == MODE_SELECT_AES128
-                    ) ? (((2 * 128) / 32) -1) : (
-                    (ModeSelect == MODE_SELECT_AES192) ? (((2 * 192) / 32) - 1) : (
-                                                         (((2 * 256) / 32) - 1)
-                    ));
-
+            STATE_EXEC_KEY_SET: begin
                 if (SmaeshKeyReady_I) begin
                     if (StateCtr == ExecKeyStateCtrMax) begin
                         State    <= STATE_EXEC_INIT;
