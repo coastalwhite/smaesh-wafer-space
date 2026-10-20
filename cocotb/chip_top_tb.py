@@ -2,25 +2,41 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-import random
 import logging
 from pathlib import Path
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import Timer, Edge, RisingEdge, FallingEdge, ClockCycles
+from cocotb.triggers import Timer, RisingEdge, ClockCycles
 from cocotb_tools.runner import get_runner
+
+from smaesh_protocol import SmaeshLink, check, load_kat
+
+proj_path = Path(__file__).resolve().parent
+repo_path = proj_path.parent
 
 sim = os.getenv("SIM", "icarus")
 gl = os.getenv("GL", False)
-pdk_root = os.getenv("PDK_ROOT", Path(__file__).resolve().parent / "../gf180mcu")
+pdk_root = os.getenv("PDK_ROOT", repo_path / "gf180mcu")
 pdk = os.getenv("PDK", "gf180mcuD")
 scl = os.getenv("SCL", "gf180mcu_fd_sc_mcu7t5v0")
 pad = os.getenv("PAD", "gf180mcu_fd_io")
 sram = os.getenv("SRAM", "gf180mcu_fd_ip_sram")
 slot = os.getenv("SLOT", "1x1")
 
+# Flattened SMAesH tree built by `nix build .#smaesh-hdl`; the `result`
+# symlink is what that produces. Only needed for an RTL run -- a gate-level
+# run reads the synthesised netlist instead.
+smaesh_hdl = Path(os.getenv("SMAESH_HDL", repo_path / "result" / "hdl"))
+
 hdl_toplevel = "chip_top"
+
+# Pad assignment, mirroring the localparams in src/chip_core.sv.
+SMAESH_RX_PAD = 0  # index into input_PAD
+SMAESH_TX_PAD = 0  # index into bidir_PAD
+SMAESH_TRIGGER_PAD = 1  # index into bidir_PAD
+SMAESH_BIDIR_PADS = 2  # bidir pads taken off the counter
+
 
 async def set_defaults(dut):
     dut.input_PAD.value = 0
@@ -73,7 +89,7 @@ async def test_counter(dut):
     await ClockCycles(dut.clk_PAD, 10)
 
     # Please note that cocotb cannpt write to individual bits of a vector.
-    # If you need to write to individual bits, you can separate e.g. the 
+    # If you need to write to individual bits, you can separate e.g. the
     # bidir_PAD vector into individual bits through a tb wrapper.
     # Even better, use individual pad names for each bit.
 
@@ -83,15 +99,76 @@ async def test_counter(dut):
     # Wait for a number of clock cycles
     await ClockCycles(dut.clk_PAD, 100)
 
-    # Check the end result of the counter
-    assert dut.bidir_PAD.value == 100 - 1
+    # The counter sits above the bidir pads the SMAesH driver took, so shift
+    # them off before comparing. Driving input_PAD high also drives Rx, which
+    # wakes the driver -- it spends the next ~850 cycles shifting bits in and
+    # leaves Tx/Trigger low throughout, so those two pads read 0 here.
+    assert (int(dut.bidir_PAD.value) >> SMAESH_BIDIR_PADS) == 100 - 1
 
     logger.info("Done!")
 
 
-def chip_top_runner():
+def smaesh_link(dut):
+    """A SmaeshLink onto the chip's pads.
 
-    proj_path = Path(__file__).resolve().parent
+    Rx is one bit of the input_PAD vector and cocotb can only assign the
+    vector as a whole, so the other input pads are held low -- which also
+    keeps the counter above from running during the exchange.
+    """
+
+    def set_rx(bit):
+        dut.input_PAD.value = bit << SMAESH_RX_PAD
+
+    def get_tx():
+        return dut.bidir_PAD.value[SMAESH_TX_PAD]
+
+    return SmaeshLink(dut.clk_PAD, set_rx, get_tx)
+
+
+@cocotb.test()
+async def test_smaesh_aes128(dut):
+    """One AES-128 vector driven through the pads.
+
+    This is the chip-level wiring check: that Rx reaches the driver from an
+    input pad, that Tx comes back out on a bidir pad, and that Trigger pulses.
+    The functional coverage (every key size, decryption, back-to-back runs)
+    lives in smaesh_driver_tb, which drives the driver directly.
+    """
+    logger = logging.getLogger("chip_top_tb")
+
+    await start_up(dut)
+    await RisingEdge(dut.clk_PAD)
+
+    key, plaintext, ciphertext = load_kat("ECBGFSbox128.rsp", limit=1)[0]
+
+    # Watch Trigger for the duration: the driver raises it for the cycle in
+    # which the masked core latches its input, and a side-channel setup has
+    # nothing to arm the scope on if it never fires.
+    trigger_seen = False
+
+    async def watch_trigger():
+        nonlocal trigger_seen
+        while True:
+            await RisingEdge(dut.clk_PAD)
+            if dut.bidir_PAD.value[SMAESH_TRIGGER_PAD] == 1:
+                trigger_seen = True
+
+    watcher = cocotb.start_soon(watch_trigger())
+
+    got = await smaesh_link(dut).run_block(key, plaintext)
+    watcher.cancel()
+
+    check(got, ciphertext, "AES-128 ciphertext through the pads", key, plaintext)
+    assert trigger_seen, "Trigger never pulsed on bidir_PAD[%d]" % SMAESH_TRIGGER_PAD
+
+    logger.info(
+        "AES-128 through pads: %s -> %s",
+        plaintext.hex(),
+        got.to_bytes(16, "little").hex(),
+    )
+
+
+def chip_top_runner():
 
     sources = []
     defines = {f"SLOT_{slot.upper()}": True}
@@ -114,24 +191,42 @@ def chip_top_runner():
 
         defines.update({"FUNCTIONAL": True, "USE_POWER_PINS": True})
     else:
+        if not smaesh_hdl.is_dir():
+            raise SystemExit(
+                f"SMAesH HDL tree not found at {smaesh_hdl}.\n"
+                "chip_core instantiates smaesh_driver, which needs it.\n"
+                "Build it first:  nix build .#smaesh-hdl\n"
+                "or point SMAESH_HDL at an existing tree."
+            )
+
         sources.append(proj_path / "../src/chip_top.sv")
         sources.append(proj_path / "../src/chip_core.sv")
+
+        # The SMAesH driver and the masked core it wraps.
+        sources.append(proj_path / "../src/smaesh_driver.sv")
+        sources += sorted(smaesh_hdl.glob("*.sv"))
+        sources += sorted(smaesh_hdl.glob("*.v"))
+        includes.append(smaesh_hdl)
 
     sources += [
         # IO pad models
         Path(pdk_root) / pdk / f"libs.ref/{pad}/verilog/{pad}.v",
-        
+
         # SRAM macros
         Path(pdk_root) / pdk / f"libs.ref/{sram}/verilog/{sram}__sram512x8m8wm1.v",
-        
+
         # Custom IP
         proj_path / "../ip/gf180mcu_ws_ip__logo/vh/gf180mcu_ws_ip__logo.v",
         proj_path / "../ip/gf180mcu_ws_ip__marker/vh/gf180mcu_ws_ip__marker.v",
         proj_path / "../ip/gf180mcu_ws_ip__qrcode_id/vh/gf180mcu_ws_ip__qrcode_id.v",
         proj_path / "../ip/gf180mcu_ws_ip__shuttle_id/vh/gf180mcu_ws_ip__shuttle_id.v",
         proj_path / "../ip/gf180mcu_ws_ip__project_id/vh/gf180mcu_ws_ip__project_id.v",
-        
+
     ]
+
+    # Tracing is off by default: with the masked core in the design a full
+    # dump runs to hundreds of MB. WAVES=1 turns it back on.
+    waves = bool(os.getenv("WAVES"))
 
     build_args = []
 
@@ -141,7 +236,9 @@ def chip_top_runner():
         pass
 
     if sim == "verilator":
-        build_args = ["--timing", "--trace", "--trace-fst", "--trace-structs"]
+        build_args = ["--timing", "-Wno-fatal"]
+        if waves:
+            build_args += ["--trace-structs"]
 
     runner = get_runner(sim)
     runner.build(
@@ -151,16 +248,16 @@ def chip_top_runner():
         always=True,
         includes=includes,
         build_args=build_args,
-        waves=True,
+        waves=waves,
     )
 
     plusargs = []
 
     runner.test(
         hdl_toplevel=hdl_toplevel,
-        test_module="chip_top_tb,",
+        test_module="chip_top_tb",
         plusargs=plusargs,
-        waves=True,
+        waves=waves,
     )
 
 

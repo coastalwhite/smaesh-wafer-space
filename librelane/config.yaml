@@ -32,10 +32,63 @@ DESIGN_NAME: chip_top
 VERILOG_FILES:
 - dir::../src/chip_top.sv
 - dir::../src/chip_core.sv
+- dir::../src/smaesh_driver.sv
+# The masked AES core the driver wraps. This is the flattened SMAesH tree
+# produced by `nix build .#smaesh-hdl` (the Makefile's smaesh-hdl target),
+# which the `result` symlink points at -- it is a build artifact, not
+# checked in, so build it before running the flow. `dir::` globs.
+- dir::../result/hdl/*.sv
+- dir::../result/hdl/*.v
 
-# Enable plugin for better SystemVerilog support
-# USE_SLANG: True
-# SLANG_ARGUMENTS: ['--keep-hierarchy']
+VERILOG_INCLUDE_DIRS:
+- dir::../src
+- dir::../result/hdl
+
+# Read the RTL with the slang plugin rather than yosys' own Verilog frontend.
+# Not optional once SMAesH is in the design: librelane passes `-noautowire`
+# to every `read_verilog`, which forces `default_nettype none` globally, and
+# SMAesH's HDL leans on implicit net declarations
+# (e.g. MSKdata_holder_low_level.sv:65, `stage_out` inside a generate block).
+# The slang path does not pass that flag.
+USE_SLANG: True
+
+# STILL BLOCKED after enabling slang: synthesis stops in Yosys.Synthesis with
+#   error: use of undeclared identifier 'd'
+# on ~60 sites across 41 files of the SMAesH tree, e.g.
+#   (* fv_prop = "PINI", fv_strat = "composite", fv_order=d *)
+#   (* matchi_prop="PINI", matchi_strat="composite_top", matchi_shares=d *)
+# These are annotations for SMAesH's own formal-verification tooling
+# (fullverif / matchi) that reference the module's `d` parameter. Yosys' own
+# frontend tolerated them; slang does not accept a parameter reference there.
+#
+# Synthesis ignores attributes, so stripping them from the generated tree
+# does not change the circuit -- the natural place is the installPhase of
+# nix/smaesh-hdl.nix, which is where that tree is assembled. Not done here
+# because the same tree is what SMAesH's formal flows read, so it is worth
+# deciding deliberately rather than as a side effect of this wiring change.
+
+# ---------------------------------------------------------------------------
+# UNRESOLVED: hierarchy preservation for the masked core
+# ---------------------------------------------------------------------------
+# SMAesH's side-channel security rests on its HPC gadgets (the MSK* modules)
+# keeping the shares of a value separate. That is a property of the gate-level
+# netlist, not of the RTL: a synthesiser free to optimise across a gadget
+# boundary can recombine shares into a single gate and silently reintroduce
+# the leakage the masking exists to remove.
+#
+# SYNTH_HIERARCHY_MODE defaults to 'flatten', so the flow as configured here
+# WILL flatten the gadgets. SMAesH's own synth/synth.tcl never flattens.
+#
+# This has not been decided yet -- it trades area and timing on a small slot
+# against the masking being worth anything, and it wants checking against
+# SMAesH's formal_verif/ tooling rather than just being switched on. Pick one:
+#
+#   # Keep every boundary, closest to SMAesH's own flow:
+#   SYNTH_HIERARCHY_MODE: keep
+#
+#   # Or flatten everything except the gadgets:
+#   SYNTH_KEEP_HIERARCHY_MODULES: [MSKand_hpc2, MSKreg, MSKregEn, ...]
+# ---------------------------------------------------------------------------
 
 # Slightly smaller file sizes
 PRIMARY_GDSII_STREAMOUT_TOOL: klayout
