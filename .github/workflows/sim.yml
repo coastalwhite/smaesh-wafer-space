@@ -1,0 +1,133 @@
+# SPDX-FileCopyrightText: © 2025 Project Template Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runs the cocotb testbenches on their own, without waiting for the chip
+# build in ci.yml. The RTL simulation also runs there, as the gate in front
+# of an hour of place-and-route; this workflow exists so that a broken
+# testbench is visible in minutes rather than after the implementation flow.
+name: Simulation
+
+on:
+  push:
+    branches:
+      - "**"
+    tags-ignore:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Same policy as ci.yml: a new push supersedes the previous run, except on
+  # the long-lived branches, where runs are kept and serialised.
+  group: >
+    sim-${{
+      (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) ||
+      format('branch-{0}', github.ref_name)
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || !(startsWith(github.ref_name, 'version-') || github.ref_name == 'main' || github.ref_name == 'dev') }}
+
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+
+jobs:
+  smaesh-driver:
+    name: SMAesH driver (verilator)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The testbench reads NIST KAT vectors out of ip/SMAesH, so the
+          # submodule has to be present.
+          #
+          # Not `recursive`: SMAesH pins its own sboxes-compress/compress
+          # submodule over SSH, which a runner has no key for, so a
+          # recursive checkout fails. Nothing here needs it -- the flake
+          # fetches COMPRESS itself, over https, from the revision pinned
+          # in flake.nix.
+          submodules: true
+          persist-credentials: false
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup_nix
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_cache_domain: ${{ vars.NIX_CACHE }}
+          nix_public_key: ${{ vars.NIX_PUBLIC_KEY }}
+
+      - name: Build with Nix
+        uses: ./.github/actions/build_nix
+        with:
+          nix_system: x86_64-linux
+
+      # Builds the flattened SMAesH tree (`nix build .#smaesh-hdl`) and then
+      # elaborates it with verilator. No PDK is involved: this testbench
+      # drives src/smaesh_driver.sv against the masked core, not the chip.
+      - name: Run the SMAesH driver testbench
+        run: nix develop --command make sim-smaesh
+
+      # Neither verilator nor cocotb's runner turns a failed test into a
+      # non-zero exit status, so the XML report is what decides this job.
+      - name: Check simulation results
+        if: success() || failure()
+        run: nix develop --command python3 scripts/check_sim_results.py cocotb/sim_build/results.xml
+
+      - name: Upload simulation results
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smaesh-driver-results
+          path: cocotb/sim_build/results.xml
+          if-no-files-found: warn
+
+  chip-top:
+    name: chip_top RTL (icarus)
+    runs-on: ubuntu-24.04
+    steps:
+      # The PDK and the Nix store together outgrow the runner's default
+      # free space.
+      - name: Maximize build space
+        uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793 # v5
+        with:
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      # chip_top_tb drives src/ and the ip/gf180mcu_ws_ip__* models, none of
+      # which are submodules.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup_nix
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          nix_cache_domain: ${{ vars.NIX_CACHE }}
+          nix_public_key: ${{ vars.NIX_PUBLIC_KEY }}
+
+      - name: Build with Nix
+        uses: ./.github/actions/build_nix
+        with:
+          nix_system: x86_64-linux
+
+      # The testbench elaborates the IO pad and SRAM models out of the PDK.
+      - name: Clone the PDK
+        run: nix develop --command make clone-pdk
+
+      - name: Run the chip_top testbench
+        run: nix develop --command make sim
+
+      - name: Check simulation results
+        if: success() || failure()
+        run: nix develop --command python3 scripts/check_sim_results.py cocotb/sim_build/results.xml
+
+      - name: Upload simulation results
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chip-top-results
+          path: cocotb/sim_build/results.xml
+          if-no-files-found: warn

@@ -145,3 +145,11 @@ sim-smaesh: smaesh-hdl ## Run the SMAesH driver testbench with cocotb
 sim-smaesh-view: ## View SMAesH driver waveforms in GTKWave (needs WAVES=1 run)
 	gtkwave cocotb/sim_build/dump.vcd
 .PHONY: sim-smaesh-view
+
+sim-check: ## Check the last cocotb run's results.xml (cocotb exits 0 even on failure)
+	python3 scripts/check_sim_results.py cocotb/sim_build/results.xml
+.PHONY: sim-check
+
+lint-actions: ## Audit the GitHub Actions workflows with zizmor
+	zizmor .github/
+.PHONY: lint-actions

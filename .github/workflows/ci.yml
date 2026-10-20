@@ -27,13 +27,18 @@ concurrency:
     }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || !(startsWith(github.ref_name, 'version-') || github.ref_name == 'main' || github.ref_name == 'dev') }}
 
+# This workflow only reads the repository and uploads artifacts; it never
+# pushes, comments or writes checks. Declaring it here means the token handed
+# to every job starts read-only rather than at the repository default.
+permissions:
+  contents: read
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
     steps:
       - name: Define the Matrix
         id: export-matrix
-        if: 
         run: |
           if ${{ github.repository == 'wafer-space/gf180mcu-project-template' }}; then
             echo "matrix={\"slot\":['1x1', '0p5x1', '1x0p5', '0p5x0p5'],\"domain\":['5v','3v3'],\"include\": [{\"pad\": 'gf180mcu_fd_io', \"domain\": '5v'},{\"scl\": 'gf180mcu_fd_sc_mcu7t5v0', \"domain\": '5v'},{\"sram\": 'gf180mcu_fd_ip_sram', \"domain\": '5v'},{\"pad\": 'gf180mcu_ocd_io', \"domain\": '3v3'},{\"scl\": 'gf180mcu_as_sc_mcu7t3v3', \"domain\": '3v3'},{\"sram\": 'gf180mcu_ocd_ip_sram', \"domain\": '3v3'}]}" >> $GITHUB_OUTPUT
@@ -50,14 +55,27 @@ jobs:
     strategy:
       matrix: ${{fromJSON(needs.prepare.outputs.matrix)}}
     steps:
+      # Through `env:` rather than expanded straight into the script: a
+      # `${{ ... }}` in a `run:` block is substituted before the shell parses
+      # the line, so the matrix values would be shell source rather than
+      # data. They are maintainer-defined here, but the indirection costs
+      # nothing and keeps the pattern consistent across the repository.
       - name: Set variables
+        env:
+          MATRIX_SLOT: ${{ matrix.slot }}
+          MATRIX_SRAM: ${{ matrix.sram }}
+          MATRIX_PAD: ${{ matrix.pad }}
+          MATRIX_SCL: ${{ matrix.scl }}
+        # zizmor: ignore[github-env]
+        # Deliberate: these select the PDK libraries for the steps below,
+        # and come from the matrix defined in this file.
         run: |
-          echo "SLOT=${{ matrix.slot }}" >> $GITHUB_ENV
-          echo "SRAM=${{ matrix.sram }}" >> $GITHUB_ENV
-          echo "PAD=${{ matrix.pad }}" >> $GITHUB_ENV
-          echo "SCL=${{ matrix.scl }}" >> $GITHUB_ENV
+          echo "SLOT=$MATRIX_SLOT" >> "$GITHUB_ENV"
+          echo "SRAM=$MATRIX_SRAM" >> "$GITHUB_ENV"
+          echo "PAD=$MATRIX_PAD" >> "$GITHUB_ENV"
+          echo "SCL=$MATRIX_SCL" >> "$GITHUB_ENV"
       - name: Maximize build space
-        uses: AdityaGarg8/remove-unwanted-software@v5
+        uses: AdityaGarg8/remove-unwanted-software@90e01b21170618765a73370fcc3abbd1684a7793 # v5
         with:
           remove-dotnet: "true"
           remove-android: "true"
@@ -66,7 +84,14 @@ jobs:
           remove-docker-images: "true"
       - uses: actions/checkout@v6
         with:
-           submodules: recursive
+          # Not `recursive`: SMAesH pins its own sboxes-compress/compress
+          # submodule over SSH, which a runner has no key for. The flake
+          # fetches that source itself, over https.
+          submodules: true
+          # Without this, the checkout leaves the job's token in
+          # .git/config, where every later step (and anything they run) can
+          # read it. Nothing below needs to talk to the remote.
+          persist-credentials: false
       - name: Setup Nix
         uses: ./.github/actions/setup_nix
         with:
@@ -86,10 +111,12 @@ jobs:
           nix develop --command make clone-pdk
       - name: Run RTL simulation
         run: |
+          # cocotb returns 0 even when tests fail, so the XML report is what
+          # decides. Checked by script rather than `! grep failure ...`:
+          # grep exits 2 on a missing file, which `!` would turn into a pass
+          # for a run that crashed before writing any result at all.
           nix develop --command make sim
-          # cocotb also returns 0 upon failure
-          # check the simulation results
-          ! grep failure cocotb/sim_build/results.xml
+          nix develop --command python3 scripts/check_sim_results.py cocotb/sim_build/results.xml
       - name: Implement the Chip
         if: success() || failure()
         run: |
@@ -118,7 +145,6 @@ jobs:
       - name: Run GL simulation
         if: success() || failure()
         run: |
+          # See the note on the RTL simulation step above.
           nix develop --command make sim-gl
-          # cocotb also returns 0 upon failure
-          # check the simulation results
-          ! grep failure cocotb/sim_build/results.xml
+          nix develop --command python3 scripts/check_sim_results.py cocotb/sim_build/results.xml

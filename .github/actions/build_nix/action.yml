@@ -15,14 +15,18 @@ runs:
     - id: Build
       name: Build
       shell: ${{ inputs.shell }}
+      # Via the environment rather than expanded into the script: see the
+      # note in ../setup_nix/action.yml.
+      env:
+        NIX_SYSTEM: ${{ inputs.nix_system }}
       run: |
         echo "#################################################################"
         outPath=$(nix build\
           --print-out-paths\
           --no-link\
           --accept-flake-config\
-          --option system ${{ inputs.nix_system }}\
-          --extra-platforms ${{ inputs.nix_system }}\
-          .#devShells.${{ inputs.nix_system }}.default)
-        echo "out-path=$outPath" >> $GITHUB_OUTPUT
+          --option system "$NIX_SYSTEM"\
+          --extra-platforms "$NIX_SYSTEM"\
+          ".#devShells.$NIX_SYSTEM.default")
+        echo "out-path=$outPath" >> "$GITHUB_OUTPUT"
         sudo du -hs /nix/store/* | sort -h | tail -n 20

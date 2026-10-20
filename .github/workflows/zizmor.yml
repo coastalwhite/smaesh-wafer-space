@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: © 2025 Project Template Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Static analysis of this repository's own GitHub Actions, with zizmor.
+#
+# Workflows here run on every push and handle a repository token, so the
+# usual Actions footguns apply: expressions expanded straight into shell,
+# unpinned third-party actions, tokens left behind in .git/config for later
+# steps to pick up. zizmor catches those by reading the workflow files, so
+# it costs a minute and needs nothing built.
+#
+# Run the same check locally with `make lint-actions`.
+name: Actions Audit
+
+on:
+  push:
+    branches:
+      - "**"
+    tags-ignore:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: >
+    zizmor-${{
+      (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) ||
+      format('branch-{0}', github.ref_name)
+    }}
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref_name != 'main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # From PyPI rather than an action, so that the version is pinned here
+      # and the audit has no action dependency of its own -- and so that
+      # this job does not have to build the Nix dev shell just to lint.
+      #
+      # This tracks the zizmor the dev shell provides, so that
+      # `make lint-actions` gives the same answer locally as CI does. Bump
+      # both together; the version in the shell follows flake.lock.
+      - name: Install zizmor
+        env:
+          ZIZMOR_VERSION: "1.18.0"
+        run: pipx install "zizmor==${ZIZMOR_VERSION}"
+
+      # `--format github` emits workflow commands, so findings show up as
+      # annotations on the offending line rather than only in the log.
+      #
+      # GH_TOKEN enables the audits that query the GitHub API (for instance
+      # resolving an action's tag to check it has not been moved). Without
+      # it those are skipped silently. zizmor exits 14 when it has findings,
+      # which fails the job.
+      - name: Audit workflows and actions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: zizmor --format github .github/

@@ -101,6 +101,13 @@
               # Waveform viewing
               gtkwave
               surfer
+
+              # Static analysis of this repo's GitHub Actions, so that
+              # `make lint-actions` runs the same checks as the Actions
+              # Audit workflow. That workflow installs zizmor from PyPI
+              # instead of building this shell; keep the two versions in
+              # step when bumping either.
+              zizmor
             ];
 
             extra-python-packages =

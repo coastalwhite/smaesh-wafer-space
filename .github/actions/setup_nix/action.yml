@@ -21,18 +21,36 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # The inputs are passed through `env:` rather than expanded directly into
+    # the script. A `${{ ... }}` inside a `run:` block is substituted before
+    # the shell ever sees it, so a value containing shell metacharacters is
+    # executed rather than assigned; going via the environment makes it a
+    # plain string.
     - name: Set GitHub Token Config String
       if: inputs.github_token != ''
       shell: ${{ inputs.shell }}
-      run: |
-        echo "GITHUB_ACCESS_TOKEN_STR=${{ inputs.github_token }}" >> $GITHUB_ENV
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}
+      # Forwarding the workflow's own GITHUB_TOKEN to the next step, which
+      # is the point of this action. The value is the repository token, not
+      # anything a contributor can influence, so the GITHUB_ENV write is
+      # accepted rather than fixed.
+      run: | # zizmor: ignore[github-env]
+        echo "GITHUB_ACCESS_TOKEN_STR=$INPUT_GITHUB_TOKEN" >> "$GITHUB_ENV"
     - name: Set Nix Cache Config Strings
       if: inputs.nix_cache_domain != '' && inputs.nix_public_key != ''
       shell: ${{ inputs.shell }}
-      run: |
-        echo "EXTRA_SUBSTITUTER_STR=https://${{ inputs.nix_cache_domain }}" >> $GITHUB_ENV
-        echo "EXTRA_TRUSTED_KEY_STR=${{ inputs.nix_public_key }}" >> $GITHUB_ENV
-    - uses: DeterminateSystems/nix-installer-action@main
+      env:
+        INPUT_NIX_CACHE_DOMAIN: ${{ inputs.nix_cache_domain }}
+        INPUT_NIX_PUBLIC_KEY: ${{ inputs.nix_public_key }}
+      # Both values come from repository variables, which only a
+      # maintainer can set, so the GITHUB_ENV writes are accepted.
+      run: | # zizmor: ignore[github-env]
+        echo "EXTRA_SUBSTITUTER_STR=https://$INPUT_NIX_CACHE_DOMAIN" >> "$GITHUB_ENV"
+        echo "EXTRA_TRUSTED_KEY_STR=$INPUT_NIX_PUBLIC_KEY" >> "$GITHUB_ENV"
+    # Pinned to a commit rather than a branch: `@main` means the action can
+    # change under us between two runs of the same commit. Bump deliberately.
+    - uses: DeterminateSystems/nix-installer-action@2cb76beab460be7e44442c7ebdcbc30b638416df # main, 2026-10-20
       with:
         determinate: false
         extra-conf: |
@@ -41,6 +59,6 @@ runs:
           extra-trusted-public-keys = ${{ env.EXTRA_TRUSTED_KEY_STR }} nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=
     - name: Inject GitHub Token into Environment
       if: inputs.github_token != ''
-      uses: fossi-foundation/nix-eda/.github/actions/nix_daemon_inject_github_token@5.5.0
+      uses: fossi-foundation/nix-eda/.github/actions/nix_daemon_inject_github_token@396cbc9dba2b9746c43a33c2ff0636b098b1982f # 5.5.0
       with:
         github_token: ${{ inputs.github_token }}
