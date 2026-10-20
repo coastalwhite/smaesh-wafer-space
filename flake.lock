@@ -22,6 +22,23 @@
         "type": "github"
       }
     },
+    "compress": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781529511,
+        "narHash": "sha256-WNN90xyRdezXhLllkTC7Al4qQYEKdI1BW9NGjj4sXMQ=",
+        "owner": "cassiersg",
+        "repo": "compress",
+        "rev": "26ccd9ca3a0e761b78f22367b5b77f678a611795",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cassiersg",
+        "repo": "compress",
+        "rev": "26ccd9ca3a0e761b78f22367b5b77f678a611795",
+        "type": "github"
+      }
+    },
     "devshell": {
       "inputs": {
         "nixpkgs": [
@@ -117,7 +134,26 @@
     },
     "root": {
       "inputs": {
-        "librelane": "librelane"
+        "compress": "compress",
+        "librelane": "librelane",
+        "smaesh": "smaesh"
+      }
+    },
+    "smaesh": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784281887,
+        "narHash": "sha256-JNbMWEv2/TSUhzaNz60hUQyS+UKLkN2hQEiPiZcTPzU=",
+        "owner": "simple-crypto",
+        "repo": "SMAesH",
+        "rev": "01e46e41f496bca75ced34f24f7273e28d212455",
+        "type": "github"
+      },
+      "original": {
+        "owner": "simple-crypto",
+        "repo": "SMAesH",
+        "rev": "01e46e41f496bca75ced34f24f7273e28d212455",
+        "type": "github"
       }
     }
   },
