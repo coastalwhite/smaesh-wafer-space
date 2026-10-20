@@ -15,6 +15,9 @@ module chip_core #(
     
     input  wire clk,       // clock
     input  wire rst_n,     // reset (active low)
+
+    input  wire Rx,
+    output wire Tx,
     
     input  wire [NUM_INPUT_PADS-1:0] input_in,   // Input value
     output wire [NUM_INPUT_PADS-1:0] input_pu,   // Pull-up
@@ -97,6 +100,12 @@ module chip_core #(
 
     assign bidir_out = count ^ {24'd0, sram_0_out, sram_1_out};
 
+    smaesh_driver driver(
+        .clk   (clk),
+        .rst_n (rst_n),
+        .Rx    (Rx),
+        .Tx    (Tx)
+    );
 endmodule
 
 `default_nettype wire
