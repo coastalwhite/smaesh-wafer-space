@@ -52,20 +52,23 @@ VERILOG_INCLUDE_DIRS:
 # The slang path does not pass that flag.
 USE_SLANG: True
 
-# STILL BLOCKED after enabling slang: synthesis stops in Yosys.Synthesis with
-#   error: use of undeclared identifier 'd'
-# on ~60 sites across 41 files of the SMAesH tree, e.g.
+# Buffer high-fanout nets during synthesis instead of leaving them to
+# Detailed Routing.
+SYNTH_ABC_BUFFERING: True
+
+# Switching to slang did surface one further problem, now fixed in
+# nix/smaesh-hdl.nix rather than here: six SMAesH modules carry a
+# fullverif/matchi annotation on the module declaration whose value is the
+# module's own `d` parameter, e.g.
 #   (* fv_prop = "PINI", fv_strat = "composite", fv_order=d *)
-#   (* matchi_prop="PINI", matchi_strat="composite_top", matchi_shares=d *)
-# These are annotations for SMAesH's own formal-verification tooling
-# (fullverif / matchi) that reference the module's `d` parameter. Yosys' own
-# frontend tolerated them; slang does not accept a parameter reference there.
-#
-# Synthesis ignores attributes, so stripping them from the generated tree
-# does not change the circuit -- the natural place is the installPhase of
-# nix/smaesh-hdl.nix, which is where that tree is assembled. Not done here
-# because the same tree is what SMAesH's formal flows read, so it is worth
-# deciding deliberately rather than as a side effect of this wiring change.
+#   module MSKnor_hpc2 #(parameter integer d=2) (...);
+# The attribute elaborates in the enclosing scope, where `d` does not exist.
+# Yosys' own frontend never evaluated attribute values and so never noticed;
+# slang does, and failed the whole compilation with
+#   error: use of undeclared identifier 'd'
+# The generator now wraps those six in the `ifdef FULLVERIF / `ifdef MATCHI
+# guards the rest of the tree already uses, so the formal flows still see
+# them and the synthesis read does not.
 
 # ---------------------------------------------------------------------------
 # UNRESOLVED: hierarchy preservation for the masked core
@@ -125,7 +128,7 @@ GRT_RESIZER_HOLD_SLACK_MARGIN: 0.3
 
 # Increase density for more 
 # logic on your die
-PL_TARGET_DENSITY_PCT: 35
+PL_TARGET_DENSITY_PCT: 75
 GRT_ALLOW_CONGESTION: true
 
 # Allow a larger Y displacement
@@ -166,34 +169,6 @@ ERROR_ON_MAGIC_DRC: False
 MAGIC_GDS_FLATGLOB:
 # For contacts
 - "*_CDNS_*"
-# Foundry provided SRAMs
-- "*$$*"
-- "M1_N*"
-- "M1_P*"
-- "M2_M1*"
-- "M3_M2*"
-- "nmos_5p0*"
-- "nmos_1p2*"
-- "pmos_5p0*"
-- "pmos_1p2*"
-- "via1_*"
-- "ypass_gate*"
-- "G_ring_*"
-# These additional cells must be flattened to get rid of 3.3V devices
-# (DUALGATE drawn into high-level cells)
-- "dcap_103*"
-- "din_*"
-- "mux821_*"
-- "rdummy_*"
-- "pmoscap_*"
-- "xdec_*"
-- "ypredec*"
-- "xpredec*"
-- "prexdec_*"
-- "xdec8_*"
-- "xdec16_*"
-- "xdec32_*"
-- "sa_*"
 
 # Since we cannot meet the minimum density limit on Metal2,
 # ignore active metal on previous and subsequent layers

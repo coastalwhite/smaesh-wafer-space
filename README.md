@@ -104,12 +104,11 @@ The project template has support for selecting libraries with the below environm
 |------|---------------------------------------------------------------------------|----------------------------|
 | SCL  | gf180mcu_fd_sc_mcu7t5v0, gf180mcu_fd_sc_mcu9t5v0, gf180mcu_as_sc_mcu7t3v3 | The standard cell library. |
 | PAD  | gf180mcu_fd_io, gf180mcu_ocd_io                                           | The I/O pad library.       |
-| SRAM | gf180mcu_fd_ip_sram, gf180mcu_ocd_ip_sram                                 | The SRAM library.          |
 
 For example, to build the 0p5x0p5 chip with 3v3 libraries:
 
 ```
-SLOT=0p5x0p5 SCL=gf180mcu_as_sc_mcu7t3v3 PAD=gf180mcu_ocd_io SRAM=gf180mcu_ocd_ip_sram make librelane
+SLOT=0p5x0p5 SCL=gf180mcu_as_sc_mcu7t3v3 PAD=gf180mcu_ocd_io make librelane
 ```
 
 The default values can be changed in the Makefile.

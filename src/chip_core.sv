@@ -3,10 +3,6 @@
 
 `default_nettype none
 
-// For `gf180mcu_xxx_ip_sram__sram512x8m8wm1, used by the macro instances
-// below. chip_top.sv includes this too; the header guards against both.
-`include "sram_defines.svh"
-
 module chip_core #(
     parameter NUM_INPUT_PADS,
     parameter NUM_BIDIR_PADS,
@@ -118,49 +114,9 @@ module chip_core #(
         end
     end
 
-    logic [7:0] sram_0_out;
-
-    `gf180mcu_xxx_ip_sram__sram512x8m8wm1 sram_0 (
-        `ifdef USE_POWER_PINS
-        .VDD  (VDD),
-        .VSS  (VSS),
-        `endif
-
-        .CLK  (clk),
-        .CEN  (1'b1),
-        .GWEN (1'b0),
-        .WEN  (8'b0),
-        .A    ('0),
-        .D    ('0),
-        .Q    (sram_0_out)
-    );
-
-    logic [7:0] sram_1_out;
-
-    `gf180mcu_xxx_ip_sram__sram512x8m8wm1 sram_1 (
-        `ifdef USE_POWER_PINS
-        .VDD  (VDD),
-        .VSS  (VSS),
-        `endif
-
-        .CLK  (clk),
-        .CEN  (1'b1),
-        .GWEN (1'b0),
-        .WEN  (8'b0),
-        .A    ('0),
-        .D    ('0),
-        .Q    (sram_1_out)
-    );
-
-    // Fold the SRAM outputs into the count so they cannot be optimised away.
-    // Zero-extend to the counter width rather than to a fixed 40: the pad
-    // count is slot-dependent, and is 38 on slot_0p5x0p5.
-    wire [NUM_COUNT_PADS-1:0] count_out =
-        count ^ {{(NUM_COUNT_PADS-16){1'b0}}, sram_0_out, sram_1_out};
-
     assign bidir_out[SMAESH_TX_PAD]                      = smaesh_tx;
     assign bidir_out[SMAESH_TRIGGER_PAD]                 = smaesh_trigger;
-    assign bidir_out[NUM_BIDIR_PADS-1:SMAESH_BIDIR_PADS] = count_out;
+    assign bidir_out[NUM_BIDIR_PADS-1:SMAESH_BIDIR_PADS] = count;
 
 endmodule
 

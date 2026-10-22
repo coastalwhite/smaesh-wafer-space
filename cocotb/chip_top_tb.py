@@ -21,7 +21,6 @@ pdk_root = os.getenv("PDK_ROOT", repo_path / "gf180mcu")
 pdk = os.getenv("PDK", "gf180mcuD")
 scl = os.getenv("SCL", "gf180mcu_fd_sc_mcu7t5v0")
 pad = os.getenv("PAD", "gf180mcu_fd_io")
-sram = os.getenv("SRAM", "gf180mcu_fd_ip_sram")
 slot = os.getenv("SLOT", "1x1")
 
 # Flattened SMAesH tree built by `nix build .#smaesh-hdl`; the `result`
@@ -178,7 +177,6 @@ def chip_top_runner():
     defines[f"PDK_{pdk.replace('-','_')}"] = True
     defines[f"SCL_{scl}"] = True
     defines[f"PAD_{pad}"] = True
-    defines[f"SRAM_{sram}"] = True
 
     if gl:
         # SCL models
@@ -211,9 +209,6 @@ def chip_top_runner():
     sources += [
         # IO pad models
         Path(pdk_root) / pdk / f"libs.ref/{pad}/verilog/{pad}.v",
-
-        # SRAM macros
-        Path(pdk_root) / pdk / f"libs.ref/{sram}/verilog/{sram}__sram512x8m8wm1.v",
 
         # Custom IP
         proj_path / "../ip/gf180mcu_ws_ip__logo/vh/gf180mcu_ws_ip__logo.v",

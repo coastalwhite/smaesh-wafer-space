@@ -3,8 +3,8 @@
 
 `default_nettype none
 
-// Pulls in generated_defines.svh, so the slot defines below resolve too.
-`include "sram_defines.svh"
+// Expands against the SLOT_* define, which comes from VERILOG_DEFINES in
+// librelane/slots/slot_*.yaml (and from the testbench for cocotb runs).
 `include "slot_defines.svh"
 
 `ifdef PAD_gf180mcu_ocd_io

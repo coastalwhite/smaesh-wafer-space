@@ -182,6 +182,53 @@ stdenvNoCC.mkDerivation {
       done < <(find "$dir" -type f \( -name '*.v' -o -name '*.vh' -o -name '*.sv' \) -print0)
     done
 
+    # Guard the six module-level fullverif/matchi annotations that upstream
+    # left unguarded. Such an attribute sits *before* the `module` keyword, so
+    # it elaborates in the scope that encloses the module -- but its value is
+    # the module's own `d` parameter, which only exists inside:
+    #
+    #   (* fv_prop = "PINI", fv_strat = "composite", fv_order=d *)
+    #   module MSKnor_hpc2 #(parameter integer d=2) (...);
+    #
+    # yosys' own Verilog frontend never evaluates attribute values, so this
+    # passes unnoticed there. slang does, and rejects the whole compilation:
+    #
+    #   MSKnor_hpc2.v:1:55: error: use of undeclared identifier 'd'
+    #
+    # which is fatal for librelane's USE_SLANG path (see librelane/config.yaml).
+    # Everywhere else in the tree -- the whole COMPRESS gadget library, the
+    # generated S-box -- the same annotations are already wrapped in `ifdef
+    # FULLVERIF / `ifdef MATCHI, so they only ever reach the formal tooling
+    # that asks for them. These six are the oversight; wrap them to match.
+    #
+    # Each attribute gets the macro its own annotation family belongs to, so
+    # nothing is lost: formal_verif/synth.tcl reads this tree with -DMATCHI=1
+    # and still sees every matchi_* attribute. Synthesis never sees either
+    # family, and attributes do not reach the netlist regardless, so the
+    # circuit is identical either way.
+    #
+    # --replace-fail, so an upstream edit to one of these lines breaks the
+    # build loudly rather than silently leaving slang broken again.
+    bt='`'
+    guard_attr() { # <file> <macro> <attribute line>
+      substituteInPlace "$out/hdl/$1" --replace-fail "$3" "''${bt}ifdef $2
+$3
+''${bt}endif"
+    }
+
+    guard_attr MSKnor_hpc2.v FULLVERIF \
+      '(* fv_prop = "PINI", fv_strat = "composite", fv_order=d *)'
+    guard_attr MSKaesMC.sv FULLVERIF \
+      '(* fv_prop = "affine", fv_strat = "composite", fv_order=d *)'
+    guard_attr MSKaesMC_inverse.sv FULLVERIF \
+      '(* fv_prop = "affine", fv_strat = "composite", fv_order=d *)'
+    guard_attr MSKaes_32bits_key_datapath.sv FULLVERIF \
+      '(* fv_prop = "PINI", fv_strat = "flatten", fv_order=d *)'
+    guard_attr MSKaes_32bits_state_datapath.sv FULLVERIF \
+      '(* fv_prop = "PINI", fv_strat = "flatten", fv_order=d *)'
+    guard_attr MSKaes_32bits_core.sv MATCHI \
+      '(* matchi_prop="PINI", matchi_strat="composite_top", matchi_arch="loopy", matchi_shares=d *)'
+
     # The generated S-box, named as the rest of the design includes it.
     cp "$work/compress/${circuitDir}/design.v"  "$out/hdl/${circuitName}.v"
     cp "$work/compress/${circuitDir}/design.vh" "$out/hdl/${circuitName}.vh"
