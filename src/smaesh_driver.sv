@@ -11,14 +11,13 @@ module smaesh_driver(
     output wire Tx,
 	output wire Trigger
 );
-    // Data-in.
-    reg [255:0] Din;
+    // Input sharing, then the result sharing. Their lifetimes do not overlap.
+    // Shifts left both ways: Rx in at bit 0, Tx out from bit 255.
+    reg [255:0] Data;
     // Key.
     //
     // Uses least-significant bits for key-sizes less than 256.
     reg [511:0] Key;
-    // Data out.
-    reg [255:0] Dout;
     // Pseudo-Random Number Seed.
     reg [79:0] Seed;
 
@@ -112,11 +111,11 @@ module smaesh_driver(
     assign SmaeshKeyModeInverse_I = (State == STATE_EXEC_KEY_SET) ? ModeDecrypt : 1'b0;
     assign SmaeshKeyValid_I = State == STATE_EXEC_KEY_SET;
 
-    assign SmaeshSharesData_I = (State == STATE_EXEC_INIT) ? Din : 256'b0;
+    assign SmaeshSharesData_I = (State == STATE_EXEC_INIT) ? Data : 256'b0;
     assign SmaeshDataValid_I = State == STATE_EXEC_INIT;
     assign SmaeshReady_O = State == STATE_EXEC_FINISH;
 
-    assign Tx = (State == STATE_TX_SEND) ? Dout[StateCtr[7:0]] : (State == STATE_TX_START);
+    assign Tx = (State == STATE_TX_SEND) ? Data[255] : (State == STATE_TX_START);
 	assign Trigger = State == STATE_EXEC_INIT;
 
     always @(posedge clk) begin
@@ -127,9 +126,8 @@ module smaesh_driver(
             ModeSelect  <= 2'b0;
             ModeDecrypt <= 1'b0;
 
-            Din         <= 256'b0;
+            Data        <= 256'b0;
             Key         <= 512'b0;
-            Dout        <= 256'b0;
             Seed        <= 80'b0;
         end
         else case (State)
@@ -139,9 +137,8 @@ module smaesh_driver(
                 ModeSelect  <= 2'b0;
                 ModeDecrypt <= 1'b0;
 
-                Din         <= 256'b0;
+                Data        <= 256'b0;
                 Key         <= 512'b0;
-                Dout        <= 256'b0;
                 Seed        <= 80'b0;
 
                 if (Rx) State <= STATE_RX_MODE_SELECT;
@@ -149,7 +146,7 @@ module smaesh_driver(
 
             // Receive configuration.
             STATE_RX_MODE_SELECT: begin 
-                ModeSelect[StateCtr[0]] <= Rx;
+                ModeSelect <= {ModeSelect[0], Rx};
                 
                 if (StateCtr[0]) State <= STATE_RX_MODE_DECRYPT;
                 StateCtr[0] <= ~StateCtr[0];
@@ -162,7 +159,7 @@ module smaesh_driver(
 
             // Receive main data chunks.
             STATE_RX_DATA_IN: begin
-                Din[StateCtr] <= Rx;
+                Data <= {Data[254:0], Rx};
 
                 if (StateCtr == DinStateCtrMax) begin
                     State <= STATE_RX_KEY_IN;
@@ -171,7 +168,7 @@ module smaesh_driver(
                 else StateCtr <= NextStateCtr;
             end
             STATE_RX_KEY_IN: begin
-                Key[StateCtr] <= Rx;
+                Key <= {Key[510:0], Rx};
 
                 if (StateCtr == KeyStateCtrMax) begin
                     State <= STATE_RX_SEED;
@@ -182,7 +179,7 @@ module smaesh_driver(
             STATE_RX_SEED: begin : SEED_RCV
                 localparam [8:0] SeedStateCtrMax = 80 - 1;
 
-                Seed[StateCtr] <= Rx;
+                Seed <= {Seed[78:0], Rx};
 
                 if (StateCtr == SeedStateCtrMax) begin
                     State <= STATE_EXEC_RESEED;
@@ -211,13 +208,15 @@ module smaesh_driver(
                 if (SmaeshValid_O) State <= STATE_EXEC_FINISH;
             end
             STATE_EXEC_FINISH: begin
-                Dout  <= SmaeshSharesData_O;
+                Data  <= SmaeshSharesData_O;
                 State <= STATE_TX_START;
             end
 
             // Transmit the result back.
             STATE_TX_START: State <= STATE_TX_SEND;
-            STATE_TX_SEND: begin 
+            STATE_TX_SEND: begin
+                Data <= {Data[254:0], 1'b0};
+
                 if (StateCtr == 9'hFF) begin
                     State <= STATE_DEFAULT;
                     StateCtr <= 9'b0;

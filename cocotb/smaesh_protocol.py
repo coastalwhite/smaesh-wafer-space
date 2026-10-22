@@ -121,13 +121,19 @@ class SmaeshLink:
         self._set_rx(0)
 
     async def send_bits(self, value: int, nbits: int):
-        """Shift `value` in on Rx, least-significant bit first.
+        """Shift `value` in on Rx, most-significant bit first.
+
+        MSB-first is what makes the driver's receive registers plain left-shift
+        registers: a bit arriving at time t lands at index nbits-1-t, so
+        value[j] always ends up at register bit j regardless of how many bits
+        this particular field carries. That matters because the field widths
+        vary with key size, and the driver reads the key from bit 0 upwards.
 
         Rx is written just after an edge and sampled on the next one, which is
         the edge this coroutine returns on.
         """
         for i in range(nbits):
-            self._set_rx((value >> i) & 1)
+            self._set_rx((value >> (nbits - 1 - i)) & 1)
             await RisingEdge(self.clk)
 
     async def recv_result(self, timeout_cycles=20_000) -> int:
@@ -146,11 +152,12 @@ class SmaeshLink:
                 "never reached STATE_TX_START"
             )
 
-        # That pulse was STATE_TX_START; the next cycle carries result bit 0.
+        # That pulse was STATE_TX_START; the next cycle carries the top bit.
+        # Most-significant bit first, matching send_bits.
         result = 0
-        for i in range(SHARES_BITS):
+        for _ in range(SHARES_BITS):
             await FallingEdge(self.clk)
-            result |= int(self._get_tx()) << i
+            result = (result << 1) | int(self._get_tx())
         return result
 
     async def run_block(self, key, plaintext, decrypt=False) -> int:
