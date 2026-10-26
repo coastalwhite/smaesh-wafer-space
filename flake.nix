@@ -101,6 +101,9 @@
               # Waveform viewing
               gtkwave
               surfer
+
+							# KLayout
+							klayout
             ];
 
             extra-python-packages =
