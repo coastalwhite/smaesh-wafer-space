@@ -93,6 +93,15 @@ SYNTH_ABC_BUFFERING: True
 #   SYNTH_KEEP_HIERARCHY_MODULES: [MSKand_hpc2, MSKreg, MSKregEn, ...]
 # ---------------------------------------------------------------------------
 
+# The gf180mcu dly* cells have the same drive strength and max_cap as buf_1,
+# differing only by a fixed intrinsic delay (dlyb_1: +1.3 ns). OpenROAD ranks
+# buffers by drive resistance and so cannot tell them apart, and repair_design
+# picked dlyb_1 for all 782 of its load-splitting buffers. Hold repair uses
+# dlyc_* separately, so leave that family alone.
+EXTRA_EXCLUDED_CELLS:
+- gf180mcu_fd_sc_mcu7t5v0__dlya_*
+- gf180mcu_fd_sc_mcu7t5v0__dlyb_*
+
 # Slightly smaller file sizes
 PRIMARY_GDSII_STREAMOUT_TOOL: klayout
 
