@@ -135,6 +135,30 @@ CLOCK_PERIOD: 40 # 25 MHz
 PL_RESIZER_HOLD_SLACK_MARGIN: 0.35
 GRT_RESIZER_HOLD_SLACK_MARGIN: 0.3
 
+# Repair slew/cap again after global routing, and let placement see timing.
+#
+# Without these, the only slew repair runs at RepairDesignPostGPL, on estimated
+# parasitics, and nothing revisits the result once the design is routed. That
+# pass picks the *lowest-drive* buffer for load splitting, so with the dly*
+# cells excluded above it settles on buf_1, which at the ~80 fF loads it hands
+# out has a ~2 ns output slew: 993 of the 1397 residual max_ss slew violations
+# are buf_1 outputs, and two cascaded buf_1 fanout buffers sit at the head of
+# the critical path. RepairDesignPostGRT can upsize them against routed
+# parasitics.
+#
+# PL_TIMING_DRIVEN defaults to false, which means placement optimises only for
+# routability while the critical path is a ~42-stage chain from the AES FSM
+# state register into the S-box, spread over a 1.05 x 1.65 mm core. Measured by
+# register group at max_ss, the S-box's own pipeline has +24.2 ns of slack, so
+# the whole violation is that one control path.
+RUN_POST_GRT_DESIGN_REPAIR: true
+PL_TIMING_DRIVEN: true
+
+# Not enabled: RUN_POST_GRT_RESIZER_TIMING, the setup-repair counterpart to the
+# above. librelane documents it as experimental ("may result in hangs and/or
+# extended run times"), so it is worth a separate experiment rather than being
+# bundled in here.
+
 # Increase density for more 
 # logic on your die
 PL_TARGET_DENSITY_PCT: 75
