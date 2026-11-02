@@ -93,6 +93,40 @@ SYNTH_ABC_BUFFERING: True
 #   SYNTH_KEEP_HIERARCHY_MODULES: [MSKand_hpc2, MSKreg, MSKregEn, ...]
 # ---------------------------------------------------------------------------
 
+SLANG_ARGUMENTS:
+- --keep-hierarchy
+
+SYNTH_KEEP_HIERARCHY_MODULES:
+# Trailing '*' is mandatory: slang specialises one module per instance, named
+# <Module>$<full.instance.path>, so a bare name matches nothing and warns.
+#
+# Nonlinear HPC3 gadgets. fv_strat="assumed" upstream: their PINI proof is taken
+# on faith and never re-derived from the internals, so this is the boundary that
+# actually carries the security argument.
+- MSKg4mul_hpc3*
+- MSKg16mul_hpc3*
+- bin_REG*             # the gadgets' internal refresh registers (no MSK prefix)
+# Share-wise linear gadgets. fv_strat="isolate"/"assumed": shares must not be
+# recombined across them.
+- MSKxor*
+- MSKinv*
+- MSKcst*
+- MSKmux*
+- MSKreg*              # NB also matches MSKregEn, which is fv_strat="flatten"
+# Randomness generation. Unannotated, but MSKbit0_sharing builds a sharing of
+# zero (rnd[i] ^ rnd[i-1]) and collapses to 0 if optimised across.
+- MSKbit0_sharing*
+- MSKrefresh_tree*
+# Optional: S-box and MixColumns as verification units (fv_strat="composite").
+# Not needed for share separation - the children above carry the assumptions.
+#- canright_aes_sbox_dual*
+#- MSKaesMC*           # also matches MSKaesMC_inverse
+
+RUN_POST_GRT_DESIGN_REPAIR: true
+RUN_POST_GRT_RESIZER_TIMING: true
+# This flag crashes during Global Placement
+# PL_TIMING_DRIVEN: true
+
 # The gf180mcu dly* cells have the same drive strength and max_cap as buf_1,
 # differing only by a fixed intrinsic delay (dlyb_1: +1.3 ns). OpenROAD ranks
 # buffers by drive resistance and so cannot tell them apart, and repair_design
