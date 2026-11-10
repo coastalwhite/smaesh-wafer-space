@@ -70,57 +70,11 @@ SYNTH_ABC_BUFFERING: True
 # guards the rest of the tree already uses, so the formal flows still see
 # them and the synthesis read does not.
 
-# ---------------------------------------------------------------------------
-# UNRESOLVED: hierarchy preservation for the masked core
-# ---------------------------------------------------------------------------
-# SMAesH's side-channel security rests on its HPC gadgets (the MSK* modules)
-# keeping the shares of a value separate. That is a property of the gate-level
-# netlist, not of the RTL: a synthesiser free to optimise across a gadget
-# boundary can recombine shares into a single gate and silently reintroduce
-# the leakage the masking exists to remove.
-#
-# SYNTH_HIERARCHY_MODE defaults to 'flatten', so the flow as configured here
-# WILL flatten the gadgets. SMAesH's own synth/synth.tcl never flattens.
-#
-# This has not been decided yet -- it trades area and timing on a small slot
-# against the masking being worth anything, and it wants checking against
-# SMAesH's formal_verif/ tooling rather than just being switched on. Pick one:
-#
-#   # Keep every boundary, closest to SMAesH's own flow:
-#   SYNTH_HIERARCHY_MODE: keep
-#
-#   # Or flatten everything except the gadgets:
-#   SYNTH_KEEP_HIERARCHY_MODULES: [MSKand_hpc2, MSKreg, MSKregEn, ...]
-# ---------------------------------------------------------------------------
-
 SLANG_ARGUMENTS:
 - --keep-hierarchy
 
-SYNTH_KEEP_HIERARCHY_MODULES:
-# Trailing '*' is mandatory: slang specialises one module per instance, named
-# <Module>$<full.instance.path>, so a bare name matches nothing and warns.
-#
-# Nonlinear HPC3 gadgets. fv_strat="assumed" upstream: their PINI proof is taken
-# on faith and never re-derived from the internals, so this is the boundary that
-# actually carries the security argument.
-- MSKg4mul_hpc3*
-- MSKg16mul_hpc3*
-- bin_REG*             # the gadgets' internal refresh registers (no MSK prefix)
-# Share-wise linear gadgets. fv_strat="isolate"/"assumed": shares must not be
-# recombined across them.
-- MSKxor*
-- MSKinv*
-- MSKcst*
-- MSKmux*
-- MSKreg*              # NB also matches MSKregEn, which is fv_strat="flatten"
-# Randomness generation. Unannotated, but MSKbit0_sharing builds a sharing of
-# zero (rnd[i] ^ rnd[i-1]) and collapses to 0 if optimised across.
-- MSKbit0_sharing*
-- MSKrefresh_tree*
-# Optional: S-box and MixColumns as verification units (fv_strat="composite").
-# Not needed for share separation - the children above carry the assumptions.
-#- canright_aes_sbox_dual*
-#- MSKaesMC*           # also matches MSKaesMC_inverse
+# Don't optimize the hierarchy. This breaks masking gadgets
+SYNTH_HIERARCHY_MODE: keep
 
 RUN_POST_GRT_DESIGN_REPAIR: true
 RUN_POST_GRT_RESIZER_TIMING: true
