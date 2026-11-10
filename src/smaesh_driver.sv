@@ -171,7 +171,7 @@ module smaesh_driver(
     assign Smaesh2Seed_I = (State == STATE_EXEC_RESEED & ImplSelect == IMPL_M2) ? Seed : 80'b0;
     assign Smaesh2SeedValid_I = State == STATE_EXEC_RESEED & ImplSelect == IMPL_M2;
 
-    assign Smaesh2KeyData_I        = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2) ? Key[32*StateCtr +: 32] : 32'b0;
+    assign Smaesh2KeyData_I        = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2) ? Key[31:0] : 32'b0;
     assign Smaesh2KeyCfg_I         = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2) ? LutModeSelectToCfg[2*ModeSelect +: 2] : 2'b0;
     assign Smaesh2KeyModeInverse_I = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2) ? ModeDecrypt : 1'b0;
     assign Smaesh2KeyValid_I = State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2;
@@ -183,7 +183,7 @@ module smaesh_driver(
     assign Smaesh3Seed_I = (State == STATE_EXEC_RESEED & ImplSelect == IMPL_M3) ? Seed : 80'b0;
     assign Smaesh3SeedValid_I = State == STATE_EXEC_RESEED & ImplSelect == IMPL_M3;
 
-    assign Smaesh3KeyData_I        = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3) ? Key[32*StateCtr +: 32] : 32'b0;
+    assign Smaesh3KeyData_I        = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3) ? Key[31:0] : 32'b0;
     assign Smaesh3KeyCfg_I         = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3) ? LutModeSelectToCfg[2*ModeSelect +: 2] : 2'b0;
     assign Smaesh3KeyModeInverse_I = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3) ? ModeDecrypt : 1'b0;
     assign Smaesh3KeyValid_I = State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3;
@@ -280,6 +280,7 @@ module smaesh_driver(
             end
             STATE_EXEC_KEY_SET: begin
                 if (SmaeshKeyReady_I) begin
+                    Key <= {32'b0, Key[767:32]};
                     if (StateCtr == ExecKeyStateCtrMax) begin
                         State    <= STATE_EXEC_INIT;
                         StateCtr <= 0;
