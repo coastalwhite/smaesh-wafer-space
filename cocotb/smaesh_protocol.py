@@ -5,19 +5,25 @@
 The driver moves one bit per clock on Rx/Tx, with no framing. A run is:
 
     1                       wake bit, leaves STATE_DEFAULT
+    1 bit                   ImplSelect (M2 / M3)
     2 bits                  ModeSelect (SBox / AES128 / AES192 / AES256)
     1 bit                   ModeDecrypt
-    256 bits                Din    -- the shared plaintext, always 128*d
-    2*keysize bits          Key    -- the shared key
+    128*d bits              Din    -- the shared plaintext
+    d*keysize bits          Key    -- the shared key
     80 bits                 Seed   -- PRNG seed
 
-then the driver pulses Tx high for one cycle and shifts out 256 bits of
+then the driver pulses Tx high for one cycle and shifts out 128*d bits of
 shared result. Everything is least-significant bit first.
 
-Sharing follows SMAesH's "stridded" convention: share 0 in the low half,
-share 1 in the high half, each share little-endian. An unmasked value is
-therefore sent as itself with a zero second share, and the result is
-recombined by XORing the two halves.
+`d` is the number of shares, selected by the ImplSelect bit: the driver
+instantiates one smaesh_hpc at d=2 and one at d=3, and the bit picks which
+one the run goes through. It also sets every field width above, so the whole
+frame length depends on it -- see `nshares` throughout this module.
+
+Sharing follows SMAesH's "stridded" convention: share i occupies the i'th
+128-bit slice, each share little-endian. An unmasked value is therefore sent
+as itself with the remaining d-1 shares zero, and the result is recombined by
+XORing all d slices together.
 
 The protocol does not care where the two signals are probed, so `SmaeshLink`
 takes callables rather than signal handles: smaesh_driver_tb drives the
@@ -32,11 +38,25 @@ from cocotb.triggers import FallingEdge, RisingEdge
 
 REPO_PATH = Path(__file__).resolve().parent.parent
 
-# Width of the shared data bus: 128 bits of AES state times d=2 shares.
-SHARES_BITS = 256
+# Width of the unshared AES state, in bits. The shared bus is this times the
+# number of shares.
+STATE_BITS = 128
+
+# Share counts the driver implements, i.e. the legal values of `nshares`.
+NSHARES = (2, 3)
 
 # Any value; the core only needs the PRNG seeded before it will accept a key.
 SEED = 0xDEADBEEFDEADBEEF
+
+
+class Implementation:
+    """The ImplSelect bit: which smaesh_hpc instance the run goes through."""
+
+    M2 = 0b0
+    M3 = 0b1
+
+
+IMPL_FOR_NSHARES = {2: Implementation.M2, 3: Implementation.M3}
 
 
 class ModeSelect:
@@ -56,6 +76,11 @@ MODE_FOR_KEYSIZE = {
     192: ModeSelect.AES192,
     256: ModeSelect.AES256,
 }
+
+
+def shared_bits(nshares, width=STATE_BITS):
+    """Width of a `width`-bit value once shared `nshares` ways."""
+    return width * nshares
 
 
 def load_kat(filename, limit=None):
@@ -81,15 +106,25 @@ def load_kat(filename, limit=None):
     return cases[:limit] if limit else cases
 
 
-def share_unmasked(value_bytes):
-    """Encode an unmasked value as a d=2 sharing: the value, then a zero share."""
-    return int.from_bytes(value_bytes + bytes(len(value_bytes)), "little")
+def share_unmasked(value_bytes, nshares):
+    """Encode an unmasked value as a `nshares`-way sharing.
+
+    The value goes in share 0 and the remaining shares are zero, which
+    recombines to the value itself. The core re-randomises the sharing
+    internally from the PRNG, so the output shares are never trivial even
+    though the input ones are.
+    """
+    pad = bytes(len(value_bytes) * (nshares - 1))
+    return int.from_bytes(value_bytes + pad, "little")
 
 
-def recombine(shared: int, nbytes=16) -> int:
-    """XOR the two shares of a stridded d=2 sharing back together."""
+def recombine(shared: int, nshares, nbytes=16) -> int:
+    """XOR the `nshares` slices of a stridded sharing back together."""
     mask = (1 << (8 * nbytes)) - 1
-    return (shared & mask) ^ ((shared >> (8 * nbytes)) & mask)
+    out = 0
+    for i in range(nshares):
+        out ^= (shared >> (8 * nbytes * i)) & mask
+    return out
 
 
 def check(got, expected_bytes, what, key, data_in):
@@ -127,7 +162,8 @@ class SmaeshLink:
         registers: a bit arriving at time t lands at index nbits-1-t, so
         value[j] always ends up at register bit j regardless of how many bits
         this particular field carries. That matters because the field widths
-        vary with key size, and the driver reads the key from bit 0 upwards.
+        vary with key size and share count, and the driver reads the key from
+        bit 0 upwards.
 
         Rx is written just after an edge and sampled on the next one, which is
         the edge this coroutine returns on.
@@ -136,8 +172,8 @@ class SmaeshLink:
             self._set_rx((value >> (nbits - 1 - i)) & 1)
             await RisingEdge(self.clk)
 
-    async def recv_result(self, timeout_cycles=20_000) -> int:
-        """Wait for the Tx start pulse, then shift out SHARES_BITS of result.
+    async def recv_result(self, nbits: int, timeout_cycles=20_000) -> int:
+        """Wait for the Tx start pulse, then shift out `nbits` of result.
 
         Tx is combinational on State/StateCtr, so it is sampled mid-cycle on
         the falling edge rather than racing the posedge that changes it.
@@ -155,31 +191,41 @@ class SmaeshLink:
         # That pulse was STATE_TX_START; the next cycle carries the top bit.
         # Most-significant bit first, matching send_bits.
         result = 0
-        for _ in range(SHARES_BITS):
+        for _ in range(nbits):
             await FallingEdge(self.clk)
             result = (result << 1) | int(self._get_tx())
         return result
 
-    async def run_block(self, key, plaintext, decrypt=False) -> int:
-        """Drive one full encryption/decryption and return the recombined result."""
+    async def run_block(self, key, plaintext, decrypt=False, nshares=2) -> int:
+        """Drive one full encryption/decryption and return the recombined result.
+
+        `nshares` picks the implementation (2 -> M2, 3 -> M3) and so sets the
+        width of the data, key and result fields.
+        """
+        assert nshares in NSHARES, f"nshares must be one of {NSHARES}, got {nshares}"
+
         keysize = len(key) * 8
         mode = MODE_FOR_KEYSIZE[keysize]
+        din_bits = shared_bits(nshares)
 
         # Wake the FSM out of STATE_DEFAULT.
         await self.send_bits(1, 1)
 
+        await self.send_bits(IMPL_FOR_NSHARES[nshares], 1)
         await self.send_bits(mode, 2)
         await self.send_bits(
             ModeDecrypt.DECRYPT if decrypt else ModeDecrypt.ENCRYPT, 1
         )
-        await self.send_bits(share_unmasked(plaintext), SHARES_BITS)
-        await self.send_bits(share_unmasked(key), 2 * keysize)
+        await self.send_bits(share_unmasked(plaintext, nshares), din_bits)
+        await self.send_bits(
+            share_unmasked(key, nshares), shared_bits(nshares, keysize)
+        )
         await self.send_bits(SEED, 80)
 
         # Idle the line while the core reseeds, loads the key and runs.
         self.idle()
 
-        result = recombine(await self.recv_result())
+        result = recombine(await self.recv_result(din_bits), nshares)
 
         # recv_result returns mid-cycle on the last transmitted bit, and it is
         # the *next* rising edge that leaves STATE_TX_SEND. Driving a wake bit

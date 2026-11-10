@@ -1,21 +1,5 @@
 {
   "nodes": {
-    "artistic": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1791906352,
-        "narHash": "sha256-rzBNQyBJRvPhWJqF/aKZwP+Z45xYYo4fzkbKQhbw/lQ=",
-        "owner": "pulp-platform",
-        "repo": "artistic",
-        "rev": "c744c4f0d0cd54966d218ca5a1bc3e6792a23fc1",
-        "type": "github"
-      },
-      "original": {
-        "owner": "pulp-platform",
-        "repo": "artistic",
-        "type": "github"
-      }
-    },
     "ciel": {
       "inputs": {
         "nix-eda": [
@@ -150,7 +134,6 @@
     },
     "root": {
       "inputs": {
-        "artistic": "artistic",
         "compress": "compress",
         "librelane": "librelane",
         "smaesh": "smaesh"

@@ -12,12 +12,13 @@ module smaesh_driver(
 	output wire Trigger
 );
     // Input sharing, then the result sharing. Their lifetimes do not overlap.
-    // Shifts left both ways: Rx in at bit 0, Tx out from bit 255.
-    reg [255:0] Data;
+    // Shifts left both ways: Rx in at bit 0, Tx out from bit 255 (d=2) or
+    // bit 383 (d=3), depending on ImplSelect.
+    reg [383:0] Data;
     // Key.
     //
     // Uses least-significant bits for key-sizes less than 256.
-    reg [511:0] Key;
+    reg [767:0] Key;
     // Pseudo-Random Number Seed.
     reg [79:0] Seed;
 
@@ -34,11 +35,12 @@ module smaesh_driver(
     // State register for handling encryption.
     reg        [3:0] State;
     localparam [3:0] STATE_DEFAULT         = 4'b0000;
-    localparam [3:0] STATE_RX_MODE_SELECT  = 4'b0001;
-    localparam [3:0] STATE_RX_MODE_DECRYPT = 4'b0010;
-    localparam [3:0] STATE_RX_DATA_IN      = 4'b0011;
-    localparam [3:0] STATE_RX_KEY_IN       = 4'b0100;
-    localparam [3:0] STATE_RX_SEED         = 4'b0101;
+    localparam [3:0] STATE_RX_IMPL_SELECT  = 4'b0001;
+    localparam [3:0] STATE_RX_MODE_SELECT  = 4'b0010;
+    localparam [3:0] STATE_RX_MODE_DECRYPT = 4'b0011;
+    localparam [3:0] STATE_RX_DATA_IN      = 4'b0100;
+    localparam [3:0] STATE_RX_KEY_IN       = 4'b0101;
+    localparam [3:0] STATE_RX_SEED         = 4'b0110;
     localparam [3:0] STATE_EXEC_RESEED     = 4'b1000;
     localparam [3:0] STATE_EXEC_KEY_SET    = 4'b1001;
     localparam [3:0] STATE_EXEC_INIT       = 4'b1010;
@@ -48,103 +50,186 @@ module smaesh_driver(
     localparam [3:0] STATE_TX_SEND         = 4'b1111;
 
     // Intra-state counter register.
-    reg [8:0] StateCtr;
+    reg [9:0] StateCtr;
 
-    wire [31:0] SmaeshKeyData_I;
-    wire [1:0] SmaeshKeyCfg_I;
-    wire [255:0] SmaeshSharesData_I, SmaeshSharesData_O;
-    wire [79:0] SmaeshSeed_I;
-    wire SmaeshKeyModeInverse_I,SmaeshKeyValid_I, SmaeshKeyReady_I,
-         SmaeshDataValid_I, SmaeshDataReady_I,
-         SmaeshSeedValid_I, SmaeshSeedReady_I,
-         SmaeshValid_O, SmaeshReady_O;
+    // Selection between M2 and M3 implementations.
+    reg ImplSelect;
+    localparam IMPL_M2 = 1'b0;
+    localparam IMPL_M3 = 1'b1;
 
-    smaesh_hpc #( .d(2) ) aes_core (
+    wire [31:0] Smaesh2KeyData_I;
+    wire [1:0] Smaesh2KeyCfg_I;
+    wire [255:0] Smaesh2SharesData_I, Smaesh2SharesData_O;
+    wire [79:0] Smaesh2Seed_I;
+    wire Smaesh2KeyModeInverse_I,Smaesh2KeyValid_I, Smaesh2KeyReady_I,
+         Smaesh2DataValid_I, Smaesh2DataReady_I,
+         Smaesh2SeedValid_I, Smaesh2SeedReady_I,
+         Smaesh2Valid_O, Smaesh2Ready_O;
+
+    wire [31:0] Smaesh3KeyData_I;
+    wire [1:0] Smaesh3KeyCfg_I;
+    wire [383:0] Smaesh3SharesData_I, Smaesh3SharesData_O;
+    wire [79:0] Smaesh3Seed_I;
+    wire Smaesh3KeyModeInverse_I,Smaesh3KeyValid_I, Smaesh3KeyReady_I,
+         Smaesh3DataValid_I, Smaesh3DataReady_I,
+         Smaesh3SeedValid_I, Smaesh3SeedReady_I,
+         Smaesh3Valid_O, Smaesh3Ready_O;
+
+    smaesh_hpc #( .d(2) ) aes_core_m2 (
         .clk                 (clk),
         .rst                 (~rst_n),
 
-        .in_key_data         (SmaeshKeyData_I),
-        .in_key_size_cfg     (SmaeshKeyCfg_I),
-        .in_key_mode_inverse (SmaeshKeyModeInverse_I),
-        .in_key_valid        (SmaeshKeyValid_I),
-        .in_key_ready        (SmaeshKeyReady_I),
+        .in_key_data         (Smaesh2KeyData_I),
+        .in_key_size_cfg     (Smaesh2KeyCfg_I),
+        .in_key_mode_inverse (Smaesh2KeyModeInverse_I),
+        .in_key_valid        (Smaesh2KeyValid_I),
+        .in_key_ready        (Smaesh2KeyReady_I),
 
-        .in_data_valid       (SmaeshDataValid_I),
-        .in_data_ready       (SmaeshDataReady_I),
-        .in_shares_data      (SmaeshSharesData_I),
+        .in_data_valid       (Smaesh2DataValid_I),
+        .in_data_ready       (Smaesh2DataReady_I),
+        .in_shares_data      (Smaesh2SharesData_I),
 
-        .in_seed_valid       (SmaeshSeedValid_I),
-        .in_seed_ready       (SmaeshSeedReady_I),
-        .in_seed             (SmaeshSeed_I),
+        .in_seed_valid       (Smaesh2SeedValid_I),
+        .in_seed_ready       (Smaesh2SeedReady_I),
+        .in_seed             (Smaesh2Seed_I),
 
-        .out_valid           (SmaeshValid_O),
-        .out_ready           (SmaeshReady_O),
-        .out_shares_data     (SmaeshSharesData_O)
+        .out_valid           (Smaesh2Valid_O),
+        .out_ready           (Smaesh2Ready_O),
+        .out_shares_data     (Smaesh2SharesData_O)
+    );
+    smaesh_hpc #( .d(3) ) aes_core_m3 (
+        .clk                 (clk),
+        .rst                 (~rst_n),
+
+        .in_key_data         (Smaesh3KeyData_I),
+        .in_key_size_cfg     (Smaesh3KeyCfg_I),
+        .in_key_mode_inverse (Smaesh3KeyModeInverse_I),
+        .in_key_valid        (Smaesh3KeyValid_I),
+        .in_key_ready        (Smaesh3KeyReady_I),
+
+        .in_data_valid       (Smaesh3DataValid_I),
+        .in_data_ready       (Smaesh3DataReady_I),
+        .in_shares_data      (Smaesh3SharesData_I),
+
+        .in_seed_valid       (Smaesh3SeedValid_I),
+        .in_seed_ready       (Smaesh3SeedReady_I),
+        .in_seed             (Smaesh3Seed_I),
+
+        .out_valid           (Smaesh3Valid_O),
+        .out_ready           (Smaesh3Ready_O),
+        .out_shares_data     (Smaesh3SharesData_O)
     );
 
-    wire [8:0] NextStateCtr = StateCtr + 1;
+    wire [9:0] NextStateCtr = StateCtr + 1;
     localparam [7:0] LutModeSelectToCfg = 8'b10_01_00_00;
 
     // Per-state counter limits.
-    wire [8:0] DinStateCtrMax =
-        (ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (2*128 - 1);
-    wire [8:0] KeyStateCtrMax =
-        (ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (
-        (ModeSelect == MODE_SELECT_AES128) ? (2*128 - 1) : (
-        (ModeSelect == MODE_SELECT_AES192) ? (2*192 - 1) : (
-                                             (2*256 - 1)
-        )));
-    wire [8:0] ExecKeyStateCtrMax =
-        (
-             ModeSelect == MODE_SELECT_SBOX
-          || ModeSelect == MODE_SELECT_AES128
-        ) ? (((2 * 128) / 32) - 1) : (
-        (ModeSelect == MODE_SELECT_AES192) ? (((2 * 192) / 32) - 1) : (
-                                             (((2 * 256) / 32) - 1)
-        ));
+    wire [9:0] DinStateCtrMax = (ImplSelect == IMPL_M2)
+        ? ((ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (2*128 - 1))
+        : ((ModeSelect == MODE_SELECT_SBOX) ? (3*8 - 1) : (3*128 - 1));
+    wire [9:0] KeyStateCtrMax = (ImplSelect == IMPL_M2)
+        ? (
+            (ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (
+            (ModeSelect == MODE_SELECT_AES128) ? (2*128 - 1) : (
+            (ModeSelect == MODE_SELECT_AES192) ? (2*192 - 1) : (
+                                                 (2*256 - 1)
+            )))
+        )
+        : (
+            (ModeSelect == MODE_SELECT_SBOX) ? (3*8 - 1) : (
+            (ModeSelect == MODE_SELECT_AES128) ? (3*128 - 1) : (
+            (ModeSelect == MODE_SELECT_AES192) ? (3*192 - 1) : (
+                                                 (3*256 - 1)
+            )))
+        );
+    wire [9:0] ExecKeyStateCtrMax = (ImplSelect == IMPL_M2)
+        ? (
+            (
+                 ModeSelect == MODE_SELECT_SBOX
+              || ModeSelect == MODE_SELECT_AES128
+            ) ? (((2 * 128) / 32) - 1) : (
+            (ModeSelect == MODE_SELECT_AES192) ? (((2 * 192) / 32) - 1) : (
+                                                 (((2 * 256) / 32) - 1)
+            ))
+        )
+        : (
+            (
+                 ModeSelect == MODE_SELECT_SBOX
+              || ModeSelect == MODE_SELECT_AES128
+            ) ? (((3 * 128) / 32) - 1) : (
+            (ModeSelect == MODE_SELECT_AES192) ? (((3 * 192) / 32) - 1) : (
+                                                 (((3 * 256) / 32) - 1)
+            ))
+        );
+    wire [9:0] TxSendStateCtrMax = (ImplSelect == IMPL_M2) ? 10'd255 : 10'd383;
 
-    assign SmaeshSeed_I = (State == STATE_EXEC_RESEED) ? Seed : 80'b0;
-    assign SmaeshSeedValid_I = State == STATE_EXEC_RESEED;
+	wire SmaeshSeedReady_I = (ImplSelect == IMPL_M2) ? Smaesh2SeedReady_I : Smaesh3SeedReady_I;
+	wire SmaeshKeyReady_I = (ImplSelect == IMPL_M2) ? Smaesh2KeyReady_I : Smaesh3KeyReady_I;
+	wire SmaeshDataReady_I = (ImplSelect == IMPL_M2) ? Smaesh2DataReady_I : Smaesh3DataReady_I;
+	wire SmaeshValid_O = (ImplSelect == IMPL_M2) ? Smaesh2Valid_O : Smaesh3Valid_O;
 
-    assign SmaeshKeyData_I        = (State == STATE_EXEC_KEY_SET) ? Key[32*StateCtr +: 32] : 32'b0;
-    assign SmaeshKeyCfg_I         = (State == STATE_EXEC_KEY_SET) ? LutModeSelectToCfg[2*ModeSelect +: 2] : 2'b0;
-    assign SmaeshKeyModeInverse_I = (State == STATE_EXEC_KEY_SET) ? ModeDecrypt : 1'b0;
-    assign SmaeshKeyValid_I = State == STATE_EXEC_KEY_SET;
+    assign Smaesh2Seed_I = (State == STATE_EXEC_RESEED & ImplSelect == IMPL_M2) ? Seed : 80'b0;
+    assign Smaesh2SeedValid_I = State == STATE_EXEC_RESEED & ImplSelect == IMPL_M2;
 
-    assign SmaeshSharesData_I = (State == STATE_EXEC_INIT) ? Data : 256'b0;
-    assign SmaeshDataValid_I = State == STATE_EXEC_INIT;
-    assign SmaeshReady_O = State == STATE_EXEC_FINISH;
+    assign Smaesh2KeyData_I        = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2) ? Key[32*StateCtr +: 32] : 32'b0;
+    assign Smaesh2KeyCfg_I         = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2) ? LutModeSelectToCfg[2*ModeSelect +: 2] : 2'b0;
+    assign Smaesh2KeyModeInverse_I = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2) ? ModeDecrypt : 1'b0;
+    assign Smaesh2KeyValid_I = State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M2;
 
-    assign Tx = (State == STATE_TX_SEND) ? Data[255] : (State == STATE_TX_START);
+    assign Smaesh2SharesData_I = (State == STATE_EXEC_INIT & ImplSelect == IMPL_M2) ? Data[255:0] : 256'b0;
+    assign Smaesh2DataValid_I = State == STATE_EXEC_INIT & ImplSelect == IMPL_M2;
+    assign Smaesh2Ready_O = State == STATE_EXEC_FINISH & ImplSelect == IMPL_M2;
+
+    assign Smaesh3Seed_I = (State == STATE_EXEC_RESEED & ImplSelect == IMPL_M3) ? Seed : 80'b0;
+    assign Smaesh3SeedValid_I = State == STATE_EXEC_RESEED & ImplSelect == IMPL_M3;
+
+    assign Smaesh3KeyData_I        = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3) ? Key[32*StateCtr +: 32] : 32'b0;
+    assign Smaesh3KeyCfg_I         = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3) ? LutModeSelectToCfg[2*ModeSelect +: 2] : 2'b0;
+    assign Smaesh3KeyModeInverse_I = (State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3) ? ModeDecrypt : 1'b0;
+    assign Smaesh3KeyValid_I = State == STATE_EXEC_KEY_SET & ImplSelect == IMPL_M3;
+
+    assign Smaesh3SharesData_I = (State == STATE_EXEC_INIT & ImplSelect == IMPL_M3) ? Data[383:0] : 384'b0;
+    assign Smaesh3DataValid_I = State == STATE_EXEC_INIT & ImplSelect == IMPL_M3;
+    assign Smaesh3Ready_O = State == STATE_EXEC_FINISH & ImplSelect == IMPL_M3;
+
+    assign Tx = (State == STATE_TX_SEND)
+	    ? ((ImplSelect == IMPL_M2) ? Data[255] : Data[383])
+		: (State == STATE_TX_START);
 	assign Trigger = State == STATE_EXEC_INIT;
 
     always @(posedge clk) begin
         if (~rst_n) begin
             State        <= STATE_DEFAULT;
-            StateCtr     <= 9'b0;
+            StateCtr     <= 10'b0;
+            ImplSelect   <= IMPL_M2;
 
             ModeSelect  <= 2'b0;
             ModeDecrypt <= 1'b0;
 
-            Data        <= 256'b0;
-            Key         <= 512'b0;
+            Data        <= 384'b0;
+            Key         <= 768'b0;
             Seed        <= 80'b0;
         end
         else case (State)
             STATE_DEFAULT: begin 
-                StateCtr    <= 9'b0;
+                StateCtr    <= 10'b0;
+                ImplSelect  <= IMPL_M2;
 
                 ModeSelect  <= 2'b0;
                 ModeDecrypt <= 1'b0;
 
-                Data        <= 256'b0;
-                Key         <= 512'b0;
+                Data        <= 384'b0;
+                Key         <= 768'b0;
                 Seed        <= 80'b0;
 
-                if (Rx) State <= STATE_RX_MODE_SELECT;
+                if (Rx) State <= STATE_RX_IMPL_SELECT;
             end
 
             // Receive configuration.
+            STATE_RX_IMPL_SELECT: begin 
+                ImplSelect <= Rx;
+				State <= STATE_RX_MODE_SELECT;
+            end
             STATE_RX_MODE_SELECT: begin 
                 ModeSelect <= {ModeSelect[0], Rx};
                 
@@ -159,38 +244,39 @@ module smaesh_driver(
 
             // Receive main data chunks.
             STATE_RX_DATA_IN: begin
-                Data <= {Data[254:0], Rx};
+                Data <= {Data[382:0], Rx};
 
                 if (StateCtr == DinStateCtrMax) begin
                     State <= STATE_RX_KEY_IN;
-                    StateCtr <= 9'b0;
+                    StateCtr <= 10'b0;
                 end
                 else StateCtr <= NextStateCtr;
             end
             STATE_RX_KEY_IN: begin
-                Key <= {Key[510:0], Rx};
+                Key <= {Key[766:0], Rx};
 
                 if (StateCtr == KeyStateCtrMax) begin
                     State <= STATE_RX_SEED;
-                    StateCtr <= 9'b0;
+                    StateCtr <= 10'b0;
                 end
                 else StateCtr <= NextStateCtr;
             end
             STATE_RX_SEED: begin : SEED_RCV
-                localparam [8:0] SeedStateCtrMax = 80 - 1;
+                localparam [9:0] SeedStateCtrMax = 80 - 1;
 
                 Seed <= {Seed[78:0], Rx};
 
                 if (StateCtr == SeedStateCtrMax) begin
                     State <= STATE_EXEC_RESEED;
-                    StateCtr <= 9'b0;
+                    StateCtr <= 10'b0;
                 end
                 else StateCtr <= NextStateCtr;
             end
 
             // Execute the encryption/decryption operation.
             STATE_EXEC_RESEED: begin
-                if (SmaeshSeedReady_I) State <= STATE_EXEC_KEY_SET;
+                if (SmaeshSeedReady_I)
+                    State <= STATE_EXEC_KEY_SET;
             end
             STATE_EXEC_KEY_SET: begin
                 if (SmaeshKeyReady_I) begin
@@ -202,24 +288,28 @@ module smaesh_driver(
                 end
             end
             STATE_EXEC_INIT: begin
-                if (SmaeshDataReady_I) State <= STATE_EXEC_RUN;
+                if (SmaeshDataReady_I)
+                    State <= STATE_EXEC_RUN;
             end
             STATE_EXEC_RUN: begin
-                if (SmaeshValid_O) State <= STATE_EXEC_FINISH;
+                if (SmaeshValid_O)
+                    State <= STATE_EXEC_FINISH;
             end
             STATE_EXEC_FINISH: begin
-                Data  <= SmaeshSharesData_O;
+                Data  <= (ImplSelect == IMPL_M2)
+                    ? { 128'b0, Smaesh2SharesData_O }
+                    : Smaesh3SharesData_O;
                 State <= STATE_TX_START;
             end
 
             // Transmit the result back.
             STATE_TX_START: State <= STATE_TX_SEND;
             STATE_TX_SEND: begin
-                Data <= {Data[254:0], 1'b0};
+                Data <= {Data[382:0], 1'b0};
 
-                if (StateCtr == 9'hFF) begin
+                if (StateCtr == TxSendStateCtrMax) begin
                     State <= STATE_DEFAULT;
-                    StateCtr <= 9'b0;
+                    StateCtr <= 10'b0;
                 end
                 else StateCtr <= NextStateCtr;
             end
