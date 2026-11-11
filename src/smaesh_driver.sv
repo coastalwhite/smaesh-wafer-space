@@ -44,7 +44,7 @@ module smaesh_driver(
     localparam [3:0] STATE_EXEC_RESEED     = 4'b1000;
     localparam [3:0] STATE_EXEC_KEY_SET    = 4'b1001;
     localparam [3:0] STATE_EXEC_INIT       = 4'b1010;
-    localparam [3:0] STATE_EXEC_RUN        = 4'b1011;
+    localparam [3:0] STATE_EXEC_FULL       = 4'b1011;
     localparam [3:0] STATE_EXEC_SBOX       = 4'b1100;
     localparam [3:0] STATE_EXEC_FINISH     = 4'b1101;
     localparam [3:0] STATE_TX_START        = 4'b1110;
@@ -404,8 +404,10 @@ module smaesh_driver(
                 end
             end
             STATE_EXEC_INIT: begin
-                if (SmaeshDataReady_I | SboxMode)
-                    State <= STATE_EXEC_RUN;
+                if (SmaeshDataReady_I)
+                    State <= STATE_EXEC_FULL;
+                else if (SboxMode)
+                    State <= STATE_EXEC_SBOX;
             end
             STATE_EXEC_FULL: begin
                 if (SmaeshValid_O)
@@ -428,7 +430,7 @@ module smaesh_driver(
 					: (
 						(ImplSelect == IMPL_M2)
 						? { 128'b0, Smaesh2SharesData_O }
-						: Smaesh3SharesData_O;
+						: Smaesh3SharesData_O
 					);
                 State <= STATE_TX_START;
             end
