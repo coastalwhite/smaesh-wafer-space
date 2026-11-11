@@ -1,3 +1,5 @@
+`include "clk_gate.sv"
+
 `default_nettype none
 
 // A very simple driver for the SMAesH HPC core.
@@ -58,6 +60,16 @@ module smaesh_driver(
     localparam IMPL_M2 = 1'b0;
     localparam IMPL_M3 = 1'b1;
 
+    wire Smaesh2GatedClk, Smaesh3GatedClk, Sbox2GatedClk, Sbox3GatedClk;
+    // Don't clock gate when resetting or when we don't know the core yet. Cores
+    // should still have a few cycles to settle and cool down when transferring
+    // data.
+    wire CoresOpen = ~rst_n | (State == STATE_DEFAULT | State == STATE_RX_IMPL_SELECT | State == STATE_RX_MODE_SELECT);
+    `CLK_GATE(clkgate_aes2,  clk, (CoresOpen | ((ImplSelect == IMPL_M2) & (ModeSelect != MODE_SELECT_SBOX))), 1'b0, Smaesh2GatedClk)
+    `CLK_GATE(clkgate_aes3,  clk, (CoresOpen | ((ImplSelect == IMPL_M3) & (ModeSelect != MODE_SELECT_SBOX))), 1'b0, Smaesh3GatedClk)
+    `CLK_GATE(clkgate_sbox2, clk, (CoresOpen | ((ImplSelect == IMPL_M2) & (ModeSelect == MODE_SELECT_SBOX))), 1'b0, Sbox2GatedClk)
+    `CLK_GATE(clkgate_sbox3, clk, (CoresOpen | ((ImplSelect == IMPL_M3) & (ModeSelect == MODE_SELECT_SBOX))), 1'b0, Sbox3GatedClk)
+
     wire [31:0] Smaesh2KeyData_I;
     wire [1:0] Smaesh2KeyCfg_I;
     wire [255:0] Smaesh2SharesData_I, Smaesh2SharesData_O;
@@ -77,7 +89,7 @@ module smaesh_driver(
          Smaesh3Valid_O, Smaesh3Ready_O;
 
     smaesh_hpc #( .d(2) ) aes_core_m2 (
-        .clk                 (clk),
+        .clk                 (Smaesh2GatedClk),
         .rst                 (~rst_n),
 
         .in_key_data         (Smaesh2KeyData_I),
@@ -99,7 +111,7 @@ module smaesh_driver(
         .out_shares_data     (Smaesh2SharesData_O)
     );
     smaesh_hpc #( .d(3) ) aes_core_m3 (
-        .clk                 (clk),
+        .clk                 (Smaesh3GatedClk),
         .rst                 (~rst_n),
 
         .in_key_data         (Smaesh3KeyData_I),
@@ -171,7 +183,7 @@ module smaesh_driver(
     );
 
     gen_sbox #( .d(2) ) sbox_m2 (
-        .clk       (clk),
+        .clk       (Sbox2GatedClk),
         .i0        (Sbox2Shbus_I[0*2 +: 2]),
         .i1        (Sbox2Shbus_I[1*2 +: 2]),
         .i2        (Sbox2Shbus_I[2*2 +: 2]),
@@ -197,7 +209,7 @@ module smaesh_driver(
 
 
     gen_sbox #( .d(3) ) sbox_m3 (
-        .clk       (clk),
+        .clk       (Sbox3GatedClk),
         .i0        (Sbox3Shbus_I[0*3 +: 3]),
         .i1        (Sbox3Shbus_I[1*3 +: 3]),
         .i2        (Sbox3Shbus_I[2*3 +: 3]),
@@ -404,10 +416,10 @@ module smaesh_driver(
                 end
             end
             STATE_EXEC_INIT: begin
-                if (SmaeshDataReady_I)
-                    State <= STATE_EXEC_FULL;
-                else if (SboxMode)
+                if (SboxMode)
                     State <= STATE_EXEC_SBOX;
+                else if (SmaeshDataReady_I)
+                    State <= STATE_EXEC_FULL;
             end
             STATE_EXEC_FULL: begin
                 if (SmaeshValid_O)

@@ -204,6 +204,7 @@ def chip_top_runner():
         sources.append(proj_path / "../src/smaesh_driver.sv")
         sources += sorted(smaesh_hdl.glob("*.sv"))
         sources += sorted(smaesh_hdl.glob("*.v"))
+        includes.append(proj_path / "../src")
         includes.append(smaesh_hdl)
 
     sources += [
