@@ -397,10 +397,7 @@ def smaesh_driver_runner():
             "or point SMAESH_HDL at an existing tree."
         )
 
-    sources = [
-        REPO_PATH / "src" / "smaesh_driver.sv",
-        REPO_PATH / "src" / "clk_gate.sv",
-    ]
+    sources = [REPO_PATH / "src" / "smaesh_driver.sv"]
     sources += sorted(smaesh_hdl.glob("*.sv"))
     sources += sorted(smaesh_hdl.glob("*.v"))
 
@@ -423,7 +420,7 @@ def smaesh_driver_runner():
         hdl_toplevel=hdl_toplevel,
         defines={},
         always=True,
-        includes=[smaesh_hdl],
+        includes=[REPO_PATH / "src", smaesh_hdl],
         build_args=build_args,
         waves=waves,
     )
