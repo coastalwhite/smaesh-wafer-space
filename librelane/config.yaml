@@ -73,58 +73,44 @@ SYNTH_ABC_BUFFERING: True
 SLANG_ARGUMENTS:
 - --keep-hierarchy
 
-# Flatten, but pin the boundaries that matter. `keep` (never flatten) is the
-# safe default for a masked design, but it is expensive: measured on the same
-# die, `keep` cost +31.9% core cell area over `flatten` + a targeted pin list
-# (2,273,163 -> 2,997,120 um^2), took max-fanout violations from 103 to 269 and
-# so made repair_design insert 19,342 buffers instead of 8,273. Detailed
-# placement then could not legalise 3,535 of them and the run died with
-# DPL-0036 in RepairDesignPostGPL (see failed-run2/).
+# Flatten only what sits ABOVE the evaluation cores; keep every boundary at
+# and below them.
 #
-# Note `SYNTH_KEEP_HIERARCHY_*` is only consulted when SYNTH_HIERARCHY_MODE is
-# a flattening mode -- librelane sets the `keep_hierarchy` attribute and then
-# runs yosys' `flatten`, which skips modules carrying it.
+# `keep` (never flatten anything) is what this was before. It is expensive:
+# measured on the same die it cost +25.9% cells over `flatten` + a gadget-leaf
+# pin list (65,087 -> 81,956), took max-fanout violations from 103 to 269 and
+# so made repair_design insert 19,342 buffers instead of 8,273. Detailed
+# placement could not legalise 3,535 of them and the run died with DPL-0036
+# in RepairDesignPostGPL (see failed-run2/).
+#
+# This setting recovers only a small part of that: of the 4,470 module
+# boundaries slang creates, the patterns below pin 4,467. The only three that
+# flatten are chip_top, chip_core and smaesh_driver -- 7,873 of 81,956 cells
+# (9.6%), the driver's FSM and inter-core muxing. So expect this to land much
+# closer to `keep` than to the Nov 9 configuration, and budget area/density
+# accordingly (PL_TARGET_DENSITY_PCT, a larger slot, or MAX_FANOUT_CONSTRAINT).
 SYNTH_HIERARCHY_MODE: flatten
 
-# Which boundaries survive the flatten. Because USE_SLANG is on and slang gets
-# `--keep-hierarchy` above, slang specialises one module per instance and names
-# it `<Module>$<full.instance.path>`; a bare module name matches nothing and
-# warns "Selection ... did not match any module", so every pattern needs a
-# trailing `*`.
-SYNTH_KEEP_HIERARCHY_MODULES:
-
-# 1. The four evaluation cores. Keeping these stops synthesis merging or
-#    sharing logic between the d=2 and d=3 implementations, which would make
-#    the area/power comparison between them meaningless. Everything *below*
-#    them is flattened, so the intermediate plumbing (MSKaes_32bits_core, the
-#    fsm, the key/state datapaths, MSKaesMC, ...) is optimised freely.
-- "smaesh_hpc$chip_top.i_chip_core.driver.aes_core_m2*"
-- "smaesh_hpc$chip_top.i_chip_core.driver.aes_core_m3*"
-- "gen_sbox$chip_top.i_chip_core.driver.sbox_m2*"
-- "gen_sbox$chip_top.i_chip_core.driver.sbox_m3*"
-
-# 2. The HPC masking gadget leaves. These are NOT flattened even though they
-#    sit below the cores: the probing-security argument for HPC depends on the
-#    gadget boundary surviving synthesis, and flattening lets ABC recombine
-#    shares across it and strip the register stages that block glitch
-#    propagation. Only `bin_REG` (module attribute) and `gen_sbox`'s `sb_inst`
-#    (instance attribute) carry `keep_hierarchy` in the SMAesH source; every
-#    gadget below relies on this list. This is the same set the last run that
-#    completed the flow (RUN_2026-11-09_16-27-59) used.
+# `keep_hierarchy` is NOT recursive -- verified on yosys 0.66, both when set
+# via `setattr` and when written as `(* keep_hierarchy = 1 *)` in the source.
+# It stops only the annotated module being inlined into its parent; that
+# module's own children are still absorbed into it. yosys' own wording is
+# "Cells and/or modules with the 'keep_hierarchy' attribute set will not be
+# flattened by this command" -- the annotated object, nothing below it.
 #
-#    To flatten strictly everything below the cores, delete this block -- but
-#    that un-protects the masking, so do it only for an area experiment you do
-#    not intend to tape out.
-- "MSKg4mul_hpc3*"
-- "MSKg16mul_hpc3*"
-- "bin_REG*"
-- "MSKxor*"
-- "MSKinv*"
-- "MSKcst*"
-- "MSKmux*"
-- "MSKreg*"          # also matches MSKregEn, which is intended
-- "MSKbit0_sharing*"
-- "MSKrefresh_tree*"
+# So pinning the cores alone would NOT protect anything inside them. To keep a
+# whole subtree every module in it must be pinned, which is what the leading
+# `*` does here: USE_SLANG plus --keep-hierarchy makes slang specialise one
+# module per instance, named `<Module>$<full.instance.path>`, so a glob on the
+# instance path selects the core and every descendant of it in one pattern.
+# This also makes a separate gadget-leaf list redundant -- MSKand_hpc3,
+# MSKg16mul_hpc3, MSKreg, bin_REG and friends all live under a core and are
+# covered here.
+SYNTH_KEEP_HIERARCHY_MODULES:
+- "*$chip_top.i_chip_core.driver.aes_core_m2*"
+- "*$chip_top.i_chip_core.driver.aes_core_m3*"
+- "*$chip_top.i_chip_core.driver.sbox_m2*"
+- "*$chip_top.i_chip_core.driver.sbox_m3*"
 
 RUN_POST_GRT_DESIGN_REPAIR: true
 RUN_POST_GRT_RESIZER_TIMING: true
