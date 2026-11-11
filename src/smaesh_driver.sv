@@ -45,7 +45,8 @@ module smaesh_driver(
     localparam [3:0] STATE_EXEC_KEY_SET    = 4'b1001;
     localparam [3:0] STATE_EXEC_INIT       = 4'b1010;
     localparam [3:0] STATE_EXEC_RUN        = 4'b1011;
-    localparam [3:0] STATE_EXEC_FINISH     = 4'b1100;
+    localparam [3:0] STATE_EXEC_SBOX       = 4'b1100;
+    localparam [3:0] STATE_EXEC_FINISH     = 4'b1101;
     localparam [3:0] STATE_TX_START        = 4'b1110;
     localparam [3:0] STATE_TX_SEND         = 4'b1111;
 
@@ -120,6 +121,106 @@ module smaesh_driver(
         .out_shares_data     (Smaesh3SharesData_O)
     );
 
+    localparam [9:0] SBOX_LATENCY = 4;
+
+    // Randomness demanded by one S-Box per cycle.
+    localparam integer SBOX_M2_RND_BUS0 = 4*2*(2-1);  //  8
+    localparam integer SBOX_M2_RND_BUS1 = 2*2*(2-1);  //  4
+    localparam integer SBOX_M2_RND_BUS2 = 4*2*(2-1);  //  8
+    localparam integer SBOX_M2_RND_BUS3 = 8*2*(2-1);  // 16
+    localparam integer SBOX_M3_RND_BUS0 = 4*3*(3-1);  // 24
+    localparam integer SBOX_M3_RND_BUS1 = 2*3*(3-1);  // 12
+    localparam integer SBOX_M3_RND_BUS2 = 4*3*(3-1);  // 24
+    localparam integer SBOX_M3_RND_BUS3 = 8*3*(3-1);  // 48
+
+    localparam integer SBOX_M2_RND_TOTAL = SBOX_M2_RND_BUS0 + SBOX_M2_RND_BUS1
+                                         + SBOX_M2_RND_BUS2 + SBOX_M2_RND_BUS3;
+    localparam integer SBOX_M3_RND_TOTAL = SBOX_M3_RND_BUS0 + SBOX_M3_RND_BUS1
+                                         + SBOX_M3_RND_BUS2 + SBOX_M3_RND_BUS3;
+
+    wire SboxMode = ModeSelect == MODE_SELECT_SBOX;
+
+    wire [8*2-1:0] Sbox2Shares_I = ((State == STATE_EXEC_SBOX) & (ImplSelect == IMPL_M2))
+        ? Data[8*2-1:0] : {(8*2){1'b0}};
+    wire [8*2-1:0] Sbox2Shbus_I;
+    wire [8*2-1:0] Sbox2Shbus_O;
+    wire [8*2-1:0] Sbox2Shares_O;
+
+    wire [8*3-1:0] Sbox3Shares_I = ((State == STATE_EXEC_SBOX) & (ImplSelect == IMPL_M3))
+        ? Data[8*3-1:0] : {(8*3){1'b0}};
+    wire [8*3-1:0] Sbox3Shbus_I;
+    wire [8*3-1:0] Sbox3Shbus_O;
+    wire [8*3-1:0] Sbox3Shares_O;
+
+    shares2shbus #(.d(2), .count(8)) sbox_m2_in_encoding (
+        .shares (Sbox2Shares_I),
+        .shbus  (Sbox2Shbus_I)
+    );
+    shbus2shares #(.d(2), .count(8)) sbox_m2_out_encoding (
+        .shbus  (Sbox2Shbus_O),
+        .shares (Sbox2Shares_O)
+    );
+
+    shares2shbus #(.d(3), .count(8)) sbox_m3_in_encoding (
+        .shares (Sbox3Shares_I),
+        .shbus  (Sbox3Shbus_I)
+    );
+    shbus2shares #(.d(3), .count(8)) sbox_m3_out_encoding (
+        .shbus  (Sbox3Shbus_O),
+        .shares (Sbox3Shares_O)
+    );
+
+    gen_sbox #( .d(2) ) sbox_m2 (
+        .clk       (clk),
+        .i0        (Sbox2Shbus_I[0*2 +: 2]),
+        .i1        (Sbox2Shbus_I[1*2 +: 2]),
+        .i2        (Sbox2Shbus_I[2*2 +: 2]),
+        .i3        (Sbox2Shbus_I[3*2 +: 2]),
+        .i4        (Sbox2Shbus_I[4*2 +: 2]),
+        .i5        (Sbox2Shbus_I[5*2 +: 2]),
+        .i6        (Sbox2Shbus_I[6*2 +: 2]),
+        .i7        (Sbox2Shbus_I[7*2 +: 2]),
+        .rnd_bus0w (Key[0 +: SBOX_M2_RND_BUS0]),
+        .rnd_bus1w (Key[SBOX_M2_RND_BUS0 +: SBOX_M2_RND_BUS1]),
+        .rnd_bus2w (Key[SBOX_M2_RND_BUS0 + SBOX_M2_RND_BUS1 +: SBOX_M2_RND_BUS2]),
+        .rnd_bus3w (Key[SBOX_M2_RND_BUS0 + SBOX_M2_RND_BUS1 + SBOX_M2_RND_BUS2 +: SBOX_M2_RND_BUS3]),
+        .inverse   (ModeDecrypt),
+        .o0        (Sbox2Shbus_O[0*2 +: 2]),
+        .o1        (Sbox2Shbus_O[1*2 +: 2]),
+        .o2        (Sbox2Shbus_O[2*2 +: 2]),
+        .o3        (Sbox2Shbus_O[3*2 +: 2]),
+        .o4        (Sbox2Shbus_O[4*2 +: 2]),
+        .o5        (Sbox2Shbus_O[5*2 +: 2]),
+        .o6        (Sbox2Shbus_O[6*2 +: 2]),
+        .o7        (Sbox2Shbus_O[7*2 +: 2])
+    );
+
+
+    gen_sbox #( .d(3) ) sbox_m3 (
+        .clk       (clk),
+        .i0        (Sbox3Shbus_I[0*3 +: 3]),
+        .i1        (Sbox3Shbus_I[1*3 +: 3]),
+        .i2        (Sbox3Shbus_I[2*3 +: 3]),
+        .i3        (Sbox3Shbus_I[3*3 +: 3]),
+        .i4        (Sbox3Shbus_I[4*3 +: 3]),
+        .i5        (Sbox3Shbus_I[5*3 +: 3]),
+        .i6        (Sbox3Shbus_I[6*3 +: 3]),
+        .i7        (Sbox3Shbus_I[7*3 +: 3]),
+        .rnd_bus0w (Key[0 +: SBOX_M3_RND_BUS0]),
+        .rnd_bus1w (Key[SBOX_M3_RND_BUS0 +: SBOX_M3_RND_BUS1]),
+        .rnd_bus2w (Key[SBOX_M3_RND_BUS0 + SBOX_M3_RND_BUS1 +: SBOX_M3_RND_BUS2]),
+        .rnd_bus3w (Key[SBOX_M3_RND_BUS0 + SBOX_M3_RND_BUS1 + SBOX_M3_RND_BUS2 +: SBOX_M3_RND_BUS3]),
+        .inverse   (ModeDecrypt),
+        .o0        (Sbox3Shbus_O[0*3 +: 3]),
+        .o1        (Sbox3Shbus_O[1*3 +: 3]),
+        .o2        (Sbox3Shbus_O[2*3 +: 3]),
+        .o3        (Sbox3Shbus_O[3*3 +: 3]),
+        .o4        (Sbox3Shbus_O[4*3 +: 3]),
+        .o5        (Sbox3Shbus_O[5*3 +: 3]),
+        .o6        (Sbox3Shbus_O[6*3 +: 3]),
+        .o7        (Sbox3Shbus_O[7*3 +: 3])
+    );
+
     wire [9:0] NextStateCtr = StateCtr + 1;
     localparam [7:0] LutModeSelectToCfg = 8'b10_01_00_00;
 
@@ -127,16 +228,18 @@ module smaesh_driver(
     wire [9:0] DinStateCtrMax = (ImplSelect == IMPL_M2)
         ? ((ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (2*128 - 1))
         : ((ModeSelect == MODE_SELECT_SBOX) ? (3*8 - 1) : (3*128 - 1));
+
+    // In S-Box mode the Key register contains the randomness.
     wire [9:0] KeyStateCtrMax = (ImplSelect == IMPL_M2)
         ? (
-            (ModeSelect == MODE_SELECT_SBOX) ? (2*8 - 1) : (
+            (ModeSelect == MODE_SELECT_SBOX) ? (10'(SBOX_M2_RND_TOTAL - 1)) : (
             (ModeSelect == MODE_SELECT_AES128) ? (2*128 - 1) : (
             (ModeSelect == MODE_SELECT_AES192) ? (2*192 - 1) : (
                                                  (2*256 - 1)
             )))
         )
         : (
-            (ModeSelect == MODE_SELECT_SBOX) ? (3*8 - 1) : (
+            (ModeSelect == MODE_SELECT_SBOX) ? (10'(SBOX_M3_RND_TOTAL - 1)) : (
             (ModeSelect == MODE_SELECT_AES128) ? (3*128 - 1) : (
             (ModeSelect == MODE_SELECT_AES192) ? (3*192 - 1) : (
                                                  (3*256 - 1)
@@ -161,7 +264,9 @@ module smaesh_driver(
                                                  (((3 * 256) / 32) - 1)
             ))
         );
-    wire [9:0] TxSendStateCtrMax = (ImplSelect == IMPL_M2) ? 10'd255 : 10'd383;
+    wire [9:0] TxSendStateCtrMax = SboxMode
+        ? ((ImplSelect == IMPL_M2) ? (2*8 - 1) : (3*8 - 1))
+        : ((ImplSelect == IMPL_M2) ? 10'd255   : 10'd383);
 
 	wire SmaeshSeedReady_I = (ImplSelect == IMPL_M2) ? Smaesh2SeedReady_I : Smaesh3SeedReady_I;
 	wire SmaeshKeyReady_I = (ImplSelect == IMPL_M2) ? Smaesh2KeyReady_I : Smaesh3KeyReady_I;
@@ -193,9 +298,19 @@ module smaesh_driver(
     assign Smaesh3Ready_O = State == STATE_EXEC_FINISH & ImplSelect == IMPL_M3;
 
     assign Tx = (State == STATE_TX_SEND)
-	    ? ((ImplSelect == IMPL_M2) ? Data[255] : Data[383])
+	    ? (SboxMode
+	        ? ((ImplSelect == IMPL_M2) ? Data[2*8 - 1] : Data[3*8 - 1])
+	        : ((ImplSelect == IMPL_M2) ? Data[255]     : Data[383]))
 		: (State == STATE_TX_START);
-	assign Trigger = State == STATE_EXEC_INIT;
+
+	// Marks the computation in either mode:
+	// - Full AES: STATE_EXEC_INIT -> STATE_EXEC_FULL -> STATE_EXEC_FINISH
+	// - S-Box:    STATE_EXEC_INIT -> STATE_EXEC_SBOX -> STATE_EXEC_FINISH
+	assign Trigger =
+	      (State == STATE_EXEC_INIT)
+	    | (State == STATE_EXEC_FULL)
+		| (State == STATE_EXEC_FINISH)
+		| (State == STATE_EXEC_SBOX);
 
     always @(posedge clk) begin
         if (~rst_n) begin
@@ -256,7 +371,7 @@ module smaesh_driver(
                 Key <= {Key[766:0], Rx};
 
                 if (StateCtr == KeyStateCtrMax) begin
-                    State <= STATE_RX_SEED;
+                    State <= SboxMode ? STATE_EXEC_INIT : STATE_RX_SEED;
                     StateCtr <= 10'b0;
                 end
                 else StateCtr <= NextStateCtr;
@@ -289,17 +404,32 @@ module smaesh_driver(
                 end
             end
             STATE_EXEC_INIT: begin
-                if (SmaeshDataReady_I)
+                if (SmaeshDataReady_I | SboxMode)
                     State <= STATE_EXEC_RUN;
             end
-            STATE_EXEC_RUN: begin
+            STATE_EXEC_FULL: begin
                 if (SmaeshValid_O)
                     State <= STATE_EXEC_FINISH;
             end
+            STATE_EXEC_SBOX: begin
+                if (StateCtr == SBOX_LATENCY) begin
+                    State    <= STATE_EXEC_FINISH;
+                    StateCtr <= 10'b0;
+                end
+                else StateCtr <= NextStateCtr;
+            end
             STATE_EXEC_FINISH: begin
-                Data  <= (ImplSelect == IMPL_M2)
-                    ? { 128'b0, Smaesh2SharesData_O }
-                    : Smaesh3SharesData_O;
+                Data  <= SboxMode
+				    ? (
+						(ImplSelect == IMPL_M2)
+						    ? { {(384 - 2*8){1'b0}}, Sbox2Shares_O }
+ 							: { {(384 - 3*8){1'b0}}, Sbox3Shares_O }
+					)
+					: (
+						(ImplSelect == IMPL_M2)
+						? { 128'b0, Smaesh2SharesData_O }
+						: Smaesh3SharesData_O;
+					);
                 State <= STATE_TX_START;
             end
 

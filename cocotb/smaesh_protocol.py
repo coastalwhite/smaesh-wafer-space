@@ -15,6 +15,22 @@ The driver moves one bit per clock on Rx/Tx, with no framing. A run is:
 then the driver pulses Tx high for one cycle and shifts out 128*d bits of
 shared result. Everything is least-significant bit first.
 
+ModeSelect.SBOX is a shorter frame over one byte instead of a block:
+
+    1                       wake bit
+    1 bit                   ImplSelect
+    2 bits                  ModeSelect = SBOX
+    1 bit                   ModeDecrypt
+    8*d bits                Din    -- the shared input byte
+    18*d*(d-1) bits         Rnd    -- gadget randomness, in the Key field
+                                      (36 bits at d=2, 108 at d=3)
+
+and 8*d bits of shared result. There is no Seed field: the S-box path has no
+PRNG, the host supplies its randomness directly, so the driver leaves the
+receive path as soon as the Rnd field is in. It evaluates a single masked
+S-box through the driver's own gen_sbox pair rather than through either
+smaesh_hpc, and ModeDecrypt picks the inverse S-box.
+
 `d` is the number of shares, selected by the ImplSelect bit: the driver
 instantiates one smaesh_hpc at d=2 and one at d=3, and the bit picks which
 one the run goes through. It also sets every field width above, so the whole
@@ -76,6 +92,70 @@ MODE_FOR_KEYSIZE = {
     192: ModeSelect.AES192,
     256: ModeSelect.AES256,
 }
+
+
+def _gf_mul(a, b):
+    """Multiply in GF(2^8) modulo the AES polynomial x^8+x^4+x^3+x+1."""
+    out = 0
+    for _ in range(8):
+        if b & 1:
+            out ^= a
+        b >>= 1
+        a <<= 1
+        if a & 0x100:
+            a ^= 0x11B
+    return out
+
+
+def _aes_sbox_table():
+    """Build the AES S-box: inversion in GF(2^8) then the affine map.
+
+    Derived instead of transcribed so there is nothing to typo, and
+    spot-checked against three published entries below.
+    """
+    inverse = [0] * 256
+    for a in range(1, 256):
+        for b in range(1, 256):
+            if _gf_mul(a, b) == 1:
+                inverse[a] = b
+                break
+
+    def rotl(x, n):
+        return ((x << n) | (x >> (8 - n))) & 0xFF
+
+    table = []
+    for a in range(256):
+        x = inverse[a]
+        table.append(x ^ rotl(x, 1) ^ rotl(x, 2) ^ rotl(x, 3) ^ rotl(x, 4) ^ 0x63)
+    return table
+
+
+SBOX = _aes_sbox_table()
+INV_SBOX = [0] * 256
+for _i, _v in enumerate(SBOX):
+    INV_SBOX[_v] = _i
+
+assert (SBOX[0x00], SBOX[0x01], SBOX[0x53]) == (0x63, 0x7C, 0xED), "S-box derivation"
+assert sorted(SBOX) == list(range(256)), "S-box must be a permutation"
+
+
+def sbox_rnd_bits(nshares):
+    """Randomness one S-box consumes, 18*d*(d-1) -- 36 at d=2, 108 at d=3.
+
+    The sum of gen_sbox's four rnd_bus widths; see the localparams in
+    src/smaesh_driver.sv, which mirror canright_aes_sbox_dual.vh.
+    """
+    return 18 * nshares * (nshares - 1)
+
+
+# Arbitrary non-zero randomness for the S-box mode. The result must not depend
+# on it -- masking only changes how the value is represented -- so the tests
+# use this by default and check a couple of other values give the same answer.
+DEFAULT_SBOX_RND = 0x2D9F4E7B1C6A3058F7B2E49D5C1A8306
+
+
+def default_sbox_rnd(nshares):
+    return DEFAULT_SBOX_RND & ((1 << sbox_rnd_bits(nshares)) - 1)
 
 
 def shared_bits(nshares, width=STATE_BITS):
@@ -194,6 +274,47 @@ class SmaeshLink:
         for _ in range(nbits):
             await FallingEdge(self.clk)
             result = (result << 1) | int(self._get_tx())
+        return result
+
+    async def run_sbox(self, value: int, rnd=None, decrypt=False, nshares=2) -> int:
+        """Drive one standalone masked S-box evaluation and return the byte.
+
+        `rnd` is the gadget randomness, which the host supplies rather than a
+        PRNG; it defaults to `default_sbox_rnd(nshares)`. Passing 0 runs the
+        gadgets with no randomness at all, which is useful as a known-answer
+        check and useless as a masked implementation.
+        """
+        assert nshares in NSHARES, f"nshares must be one of {NSHARES}, got {nshares}"
+        assert 0 <= value <= 0xFF, f"value must be a byte, got {value:#x}"
+
+        byte_bits = shared_bits(nshares, 8)
+        rnd_bits = sbox_rnd_bits(nshares)
+        if rnd is None:
+            rnd = default_sbox_rnd(nshares)
+        assert 0 <= rnd < (1 << rnd_bits), (
+            f"rnd must fit {rnd_bits} bits at d={nshares}, got {rnd:#x}"
+        )
+
+        await self.send_bits(1, 1)
+
+        await self.send_bits(IMPL_FOR_NSHARES[nshares], 1)
+        await self.send_bits(ModeSelect.SBOX, 2)
+        await self.send_bits(
+            ModeDecrypt.DECRYPT if decrypt else ModeDecrypt.ENCRYPT, 1
+        )
+        await self.send_bits(share_unmasked(bytes([value]), nshares), byte_bits)
+        # The Key field carries the randomness in this mode, and there is no
+        # Seed field -- the driver starts computing as soon as this is in.
+        await self.send_bits(rnd, rnd_bits)
+
+        self.idle()
+
+        result = recombine(await self.recv_result(byte_bits), nshares, nbytes=1)
+
+        self.idle()
+        await RisingEdge(self.clk)
+        await RisingEdge(self.clk)
+
         return result
 
     async def run_block(self, key, plaintext, decrypt=False, nshares=2) -> int:
