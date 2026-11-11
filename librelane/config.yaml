@@ -73,8 +73,13 @@ SYNTH_ABC_BUFFERING: True
 SLANG_ARGUMENTS:
 - --keep-hierarchy
 
-# Don't optimize the hierarchy. This breaks masking gadgets
-SYNTH_HIERARCHY_MODE: keep
+# Don't optimize the hierarchy of cores. This breaks masking gadgets
+SYNTH_HIERARCHY_MODE: flatten
+SYNTH_KEEP_HIERARCHY_MODULES:
+- "*$chip_top.i_chip_core.driver.aes_core_m2*"
+- "*$chip_top.i_chip_core.driver.aes_core_m3*"
+- "*$chip_top.i_chip_core.driver.sbox_m2*"
+- "*$chip_top.i_chip_core.driver.sbox_m3*"
 
 RUN_POST_GRT_DESIGN_REPAIR: true
 RUN_POST_GRT_RESIZER_TIMING: true
@@ -125,7 +130,7 @@ GRT_RESIZER_HOLD_SLACK_MARGIN: 0.3
 
 # Increase density for more 
 # logic on your die
-PL_TARGET_DENSITY_PCT: 75
+PL_TARGET_DENSITY_PCT: 85
 GRT_ALLOW_CONGESTION: true
 
 # Allow a larger Y displacement
