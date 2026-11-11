@@ -83,12 +83,20 @@ SLANG_ARGUMENTS:
 # placement could not legalise 3,535 of them and the run died with DPL-0036
 # in RepairDesignPostGPL (see failed-run2/).
 #
-# This setting recovers only a small part of that: of the 4,470 module
-# boundaries slang creates, the patterns below pin 4,467. The only three that
-# flatten are chip_top, chip_core and smaesh_driver -- 7,873 of 81,956 cells
-# (9.6%), the driver's FSM and inter-core muxing. So expect this to land much
-# closer to `keep` than to the Nov 9 configuration, and budget area/density
-# accordingly (PL_TARGET_DENSITY_PCT, a larger slot, or MAX_FANOUT_CONSTRAINT).
+# This setting recovers almost none of that, because keeping the whole subtree
+# is very nearly `keep`: of the 4,470 module boundaries slang creates, the
+# patterns below pin 4,467, leaving only chip_core and smaesh_driver to be
+# flattened into chip_top. Measured, same die:
+#
+#   flatten + gadget leaves (Nov 9, flow completed)   65,087 cells
+#   flatten + cores + gadget leaves                   69,678 cells  (+7.1%)
+#   this config (cores + whole subtree)               81,953 cells  (+25.9%)
+#   keep (everything)                                 81,956 cells  (+25.9%)
+#
+# i.e. three cells apart from `keep`. DPL-0036 will almost certainly come back
+# unless something else gives: PL_TARGET_DENSITY_PCT, a larger slot, or
+# MAX_FANOUT_CONSTRAINT to cut the 269 fanout violations behind the 19,342
+# repair_design buffers.
 SYNTH_HIERARCHY_MODE: flatten
 
 # `keep_hierarchy` is NOT recursive -- verified on yosys 0.66, both when set
