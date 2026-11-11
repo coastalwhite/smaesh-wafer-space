@@ -33,6 +33,9 @@ VERILOG_FILES:
 - dir::../src/chip_top.sv
 - dir::../src/chip_core.sv
 - dir::../src/smaesh_driver.sv
+# Clock gate wrapper: picks the SCL's ICG cell under the flow's __pnr__
+# define, and a behavioural latch everywhere else. See src/clk_gate.sv.
+- dir::../src/clk_gate.sv
 # The masked AES core the driver wraps. This is the flattened SMAesH tree
 # produced by `nix build .#smaesh-hdl` (the Makefile's smaesh-hdl target),
 # which the `result` symlink points at -- it is a build artifact, not

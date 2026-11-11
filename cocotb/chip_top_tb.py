@@ -202,6 +202,7 @@ def chip_top_runner():
 
         # The SMAesH driver and the masked core it wraps.
         sources.append(proj_path / "../src/smaesh_driver.sv")
+        sources.append(proj_path / "../src/clk_gate.sv")
         sources += sorted(smaesh_hdl.glob("*.sv"))
         sources += sorted(smaesh_hdl.glob("*.v"))
         includes.append(smaesh_hdl)

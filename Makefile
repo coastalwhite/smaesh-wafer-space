@@ -134,3 +134,32 @@ sim-smaesh: smaesh-hdl ## Run the SMAesH driver testbench with cocotb
 sim-smaesh-view: ## View SMAesH driver waveforms in GTKWave (needs WAVES=1 run)
 	gtkwave cocotb/sim_build/dump.vcd
 .PHONY: sim-smaesh-view
+
+# Clock gate. The testbench checks pulse shape rather than protocol, so it is
+# plain Verilog under iverilog instead of cocotb.
+CLK_GATE_BUILD = sim_build
+SCL_VERILOG = $(PDK_ROOT)/$(PDK)/libs.ref/$(SCL)/verilog
+
+sim-clk-gate: ## Run the clock gate testbench against the behavioural model
+	mkdir -p $(CLK_GATE_BUILD)
+	iverilog -g2012 -s clk_gate_tb \
+		-o $(CLK_GATE_BUILD)/clk_gate.vvp \
+		src/clk_gate.sv test/clk_gate_tb.sv
+	vvp $(CLK_GATE_BUILD)/clk_gate.vvp | tee $(CLK_GATE_BUILD)/clk_gate.log
+	grep -q '^PASS' $(CLK_GATE_BUILD)/clk_gate.log
+.PHONY: sim-clk-gate
+
+# Same testbench driving the ICG cell the flow actually instantiates, with the
+# flow's own defines. The two runs have to be identical, which is what makes
+# the behavioural model trustworthy for RTL simulation.
+sim-clk-gate-cell: clone-pdk sim-clk-gate ## Run the clock gate testbench against the SCL's ICG cell and diff it against the behavioural run
+	iverilog -g2012 -s clk_gate_tb \
+		-D__pnr__ -DSCL_$(SCL) -DFUNCTIONAL \
+		-o $(CLK_GATE_BUILD)/clk_gate_cell.vvp \
+		$(SCL_VERILOG)/primitives.v $(SCL_VERILOG)/$(SCL).v \
+		src/clk_gate.sv test/clk_gate_tb.sv
+	vvp $(CLK_GATE_BUILD)/clk_gate_cell.vvp | tee $(CLK_GATE_BUILD)/clk_gate_cell.log
+	grep -q '^PASS' $(CLK_GATE_BUILD)/clk_gate_cell.log
+	diff $(CLK_GATE_BUILD)/clk_gate.log $(CLK_GATE_BUILD)/clk_gate_cell.log
+	@echo "clk_gate: behavioural model and $(SCL)__icgtp_1 agree"
+.PHONY: sim-clk-gate-cell

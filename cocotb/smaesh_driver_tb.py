@@ -397,7 +397,10 @@ def smaesh_driver_runner():
             "or point SMAESH_HDL at an existing tree."
         )
 
-    sources = [REPO_PATH / "src" / "smaesh_driver.sv"]
+    sources = [
+        REPO_PATH / "src" / "smaesh_driver.sv",
+        REPO_PATH / "src" / "clk_gate.sv",
+    ]
     sources += sorted(smaesh_hdl.glob("*.sv"))
     sources += sorted(smaesh_hdl.glob("*.v"))
 
