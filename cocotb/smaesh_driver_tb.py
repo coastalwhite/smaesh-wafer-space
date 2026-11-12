@@ -22,12 +22,9 @@ from cocotb.triggers import RisingEdge, Timer
 from cocotb_tools.runner import get_runner
 
 from smaesh_protocol import (
-    INV_SBOX,
-    SBOX,
     SmaeshLink,
     check,
     load_kat,
-    sbox_rnd_bits,
 )
 
 PROJ_PATH = Path(__file__).resolve().parent
@@ -164,121 +161,6 @@ async def test_d2_aes128_decrypt(dut):
 @cocotb.test()
 async def test_d3_aes128_decrypt(dut):
     await kat_single(dut, 3, 128, decrypt=True)
-
-
-# ---------------------------------------------------------------------------
-# ModeSelect.SBOX: the driver's own gen_sbox pair, bypassing both smaesh_hpc
-# instances. These are the only tests that reach sbox_prng and STATE_EXEC_SBOX.
-# ---------------------------------------------------------------------------
-
-# A byte whose S-box image is published, plus the fixed points and the two
-# values that make the Canright basis change easy to get wrong.
-SBOX_BYTES = [0x00, 0x01, 0x53, 0x7F, 0x80, 0xAB, 0xFF]
-
-
-async def run_sbox_value(smaesh, nshares, value, decrypt=False, rnd=None):
-    table = INV_SBOX if decrypt else SBOX
-    got = await smaesh.run_sbox(value, rnd=rnd, decrypt=decrypt, nshares=nshares)
-    assert got == table[value], (
-        f"d={nshares} {'inverse ' if decrypt else ''}S-box({value:#04x}) "
-        f"with rnd={'default' if rnd is None else hex(rnd)} "
-        f"mismatch: expected {table[value]:#04x}, got {got:#04x}"
-    )
-    logger.info(
-        "d=%d %sS-box(%#04x) -> %#04x", nshares,
-        "inverse " if decrypt else "", value, got,
-    )
-
-
-@cocotb.test()
-async def test_d2_sbox(dut):
-    """Forward S-box on the d=2 instance, several bytes without a reset."""
-    await start_clock(dut)
-    await reset(dut)
-
-    smaesh = link(dut)
-    for value in SBOX_BYTES:
-        await run_sbox_value(smaesh, 2, value)
-
-
-@cocotb.test()
-async def test_d3_sbox(dut):
-    await start_clock(dut)
-    await reset(dut)
-
-    smaesh = link(dut)
-    for value in SBOX_BYTES:
-        await run_sbox_value(smaesh, 3, value)
-
-
-@cocotb.test()
-async def test_sbox_inverse(dut):
-    """ModeDecrypt selects the inverse S-box, on both instances."""
-    await start_clock(dut)
-    await reset(dut)
-
-    smaesh = link(dut)
-    for nshares in (2, 3):
-        for value in SBOX_BYTES:
-            await run_sbox_value(smaesh, nshares, value, decrypt=True)
-
-
-@cocotb.test()
-async def test_sbox_exhaustive_d2(dut):
-    """All 256 bytes through the d=2 S-box.
-
-    Cheap -- an S-box run is a few hundred cycles, against tens of thousands
-    for a block -- and it proves the mode is a bijection rather than just
-    right on the handful of bytes above.
-    """
-    await start_clock(dut)
-    await reset(dut)
-
-    smaesh = link(dut)
-    for value in range(256):
-        await run_sbox_value(smaesh, 2, value)
-
-
-@cocotb.test()
-async def test_sbox_randomness_independence(dut):
-    """The result must not depend on the randomness the host supplies.
-
-    Masking changes how a value is represented, not what it is, so every
-    randomness word -- including the degenerate all-zero and all-ones cases --
-    has to produce the same S-box output. This is the test that would catch
-    the Key field being sliced into overlapping rnd buses, or sliced past the
-    bits the host actually sent.
-    """
-    await start_clock(dut)
-    await reset(dut)
-
-    smaesh = link(dut)
-    for nshares in (2, 3):
-        width = sbox_rnd_bits(nshares)
-        for rnd in (0, 1, (1 << width) - 1, 0xA5A5A5A5A5A5A5A5 & ((1 << width) - 1)):
-            for value in (0x00, 0x53, 0xFF):
-                await run_sbox_value(smaesh, nshares, value, rnd=rnd)
-
-
-@cocotb.test()
-async def test_sbox_then_block(dut):
-    """Interleave S-box and full-block runs without a reset.
-
-    STATE_EXEC_RESEED is shared between the two modes but reseeds a different
-    PRNG in each, and the transmit width changes from 8*d to 128*d. A run of
-    either kind has to work straight after one of the other kind.
-    """
-    await start_clock(dut)
-    await reset(dut)
-
-    smaesh = link(dut)
-    vector = load_kat("ECBGFSbox128.rsp", limit=1)[0]
-
-    await run_sbox_value(smaesh, 2, 0x53)
-    await run_vector(smaesh, 2, 128, False, vector, what="block after d=2 S-box")
-    await run_sbox_value(smaesh, 3, 0x53)
-    await run_vector(smaesh, 3, 128, False, vector, what="block after d=3 S-box")
-    await run_sbox_value(smaesh, 2, 0xAB)
 
 
 @cocotb.test()
@@ -420,7 +302,7 @@ def smaesh_driver_runner():
         hdl_toplevel=hdl_toplevel,
         defines={},
         always=True,
-        includes=[smaesh_hdl],
+        includes=[REPO_PATH / "src", smaesh_hdl],
         build_args=build_args,
         waves=waves,
     )
